@@ -137,6 +137,10 @@ internal class ZimSession private constructor(
     }
 
     companion object {
+        init {
+            listOf("kiwix", "zim", "kiwix_wrapper", "zim_wrapper").forEach(System::loadLibrary)
+        }
+
         fun open(context: Context, uri: Uri): ZimSession {
             val resolver = context.contentResolver
             val descriptor = resolver.openFileDescriptor(uri, "r")
