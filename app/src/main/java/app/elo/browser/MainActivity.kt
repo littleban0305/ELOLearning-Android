@@ -240,7 +240,12 @@ private fun HomeScreen(
             }
 
             if (session == null) {
-                WelcomePanel(opening = opening, error = error, onChooseZim = onChooseZim)
+                WelcomePanel(
+                    modifier = Modifier.weight(1f),
+                    opening = opening,
+                    error = error,
+                    onChooseZim = onChooseZim
+                )
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.weight(1f)) {
@@ -302,11 +307,16 @@ private fun HomeScreen(
 }
 
 @Composable
-private fun WelcomePanel(opening: Boolean, error: String?, onChooseZim: () -> Unit) {
+private fun WelcomePanel(
+    modifier: Modifier,
+    opening: Boolean,
+    error: String?,
+    onChooseZim: () -> Unit
+) {
     Column(
         modifier = Modifier
+            .then(modifier)
             .fillMaxWidth()
-            .weight(1f),
         horizontalAlignment = Alignment.Start,
         verticalArrangement = Arrangement.Center
     ) {
