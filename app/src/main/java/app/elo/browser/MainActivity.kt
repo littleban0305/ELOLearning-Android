@@ -11,6 +11,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Book
+import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Search
@@ -73,14 +75,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
-private val Ink = Color(0xFF17352B)
-private val Leaf = Color(0xFF176B4A)
-private val Paper = Color(0xFFF4F7F1)
-private val Muted = Color(0xFF68776F)
+internal val Ink = Color(0xFF17352B)
+internal val Leaf = Color(0xFF176B4A)
+internal val Paper = Color(0xFFF4F7F1)
+internal val Muted = Color(0xFF68776F)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableEdgeToEdge()
         setContent { ELOBrowser() }
     }
 }
@@ -99,6 +102,9 @@ private fun ELOBrowser() {
     var searching by remember { mutableStateOf(false) }
     var article by remember { mutableStateOf<ArticleResult?>(null) }
     var browserUrl by remember { mutableStateOf<String?>(null) }
+    var serverUrl by remember { mutableStateOf(preferences.getString("server_url", null)) }
+    var serverOpen by remember { mutableStateOf(false) }
+    var onboarded by remember { mutableStateOf(preferences.getBoolean("onboarded", false)) }
     val currentSession by rememberUpdatedState(session)
     val keyboard = LocalSoftwareKeyboardController.current
 
@@ -136,7 +142,7 @@ private fun ELOBrowser() {
 
     LaunchedEffect(query, mode, session) {
         val activeSession = session
-        if (query.isBlank() || activeSession == null || article != null) {
+        if (query.isBlank() || activeSession == null || article != null || looksLikeUrl(query.trim())) {
             results = emptyList()
             searching = false
             return@LaunchedEffect
@@ -156,12 +162,39 @@ private fun ELOBrowser() {
         onDispose { currentSession?.close() }
     }
 
+    fun submit() {
+        val text = query.trim()
+        if (text.isEmpty()) return
+        keyboard?.hide()
+        if (looksLikeUrl(text)) {
+            browserUrl = normalizeUrl(text)
+            query = ""
+        } else if (session == null) {
+            error = "請先點左下角的 + 載入 ZIM 檔案，才能離線搜尋關鍵字。"
+        }
+    }
+
     BackHandler(article != null) { article = null }
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize(), color = Paper) {
-            if (browserUrl != null) {
-                WebBrowserScreen(initialUrl = browserUrl!!, onBack = { browserUrl = null })
+            if (!onboarded) {
+                OnboardingScreen(onStart = {
+                    preferences.edit().putBoolean("onboarded", true).apply()
+                    onboarded = true
+                })
+            } else if (serverOpen) {
+                WebBrowserScreen(
+                    initialUrl = serverUrl ?: "https://",
+                    autoLoad = serverUrl != null,
+                    onAddressLoaded = {
+                        preferences.edit().putString("server_url", it).apply()
+                        serverUrl = it
+                    },
+                    onBack = { serverOpen = false }
+                )
+            } else if (browserUrl != null) {
+                WebBrowserScreen(initialUrl = browserUrl!!, autoLoad = true, onBack = { browserUrl = null })
             } else if (article != null && session != null) {
                 ArticleScreen(
                     session = session!!,
@@ -177,10 +210,14 @@ private fun ELOBrowser() {
                     results = results,
                     searching = searching,
                     error = error,
-                    onOpenWeb = { browserUrl = "https://" },
-                    onQueryChange = { query = it },
+                    onQueryChange = {
+                        query = it
+                        if (session == null) error = null
+                    },
                     onModeChange = { mode = it },
+                    onSubmit = { submit() },
                     onChooseZim = { zimPicker.launch(arrayOf("*/*")) },
+                    onOpenServer = { serverOpen = true },
                     onOpenArticle = { article = it; keyboard?.hide() }
                 )
             }
@@ -189,164 +226,14 @@ private fun ELOBrowser() {
 }
 
 @Composable
-private fun HomeScreen(
-    session: ZimSession?,
-    opening: Boolean,
-    query: String,
-    mode: SearchMode,
-    results: List<ArticleResult>,
-    searching: Boolean,
-    error: String?,
-    onOpenWeb: () -> Unit,
-    onQueryChange: (String) -> Unit,
-    onModeChange: (SearchMode) -> Unit,
-    onChooseZim: () -> Unit,
-    onOpenArticle: (ArticleResult) -> Unit
+private fun WebBrowserScreen(
+    initialUrl: String,
+    onBack: () -> Unit,
+    autoLoad: Boolean = false,
+    onAddressLoaded: (String) -> Unit = {}
 ) {
-    val keyboard = LocalSoftwareKeyboardController.current
-    Scaffold(containerColor = Paper) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 20.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 18.dp, bottom = 20.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .width(42.dp)
-                        .height(42.dp)
-                        .background(Leaf, RoundedCornerShape(13.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(Icons.Default.Book, contentDescription = null, tint = Color.White)
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("ELOBrowser", color = Ink, fontSize = 23.sp, fontWeight = FontWeight.Bold)
-                    Text("OFFLINE LIBRARY", color = Muted, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                }
-                IconButton(onClick = onChooseZim) {
-                    Icon(Icons.Default.FolderOpen, contentDescription = "Choose ZIM file", tint = Leaf)
-                }
-                IconButton(onClick = onOpenWeb) {
-                    Icon(Icons.Default.Language, contentDescription = "Open a website", tint = Leaf)
-                }
-            }
-
-            if (session == null) {
-                WelcomePanel(
-                    modifier = Modifier.weight(1f),
-                    opening = opening,
-                    error = error,
-                    onChooseZim = onChooseZim
-                )
-            } else {
-                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(session.title, color = Ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(session.fileName, color = Muted, fontSize = 12.sp,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    }
-                    TextButton(onClick = onChooseZim) { Text("Change", color = Leaf) }
-                }
-                Spacer(Modifier.height(17.dp))
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    SearchMode.entries.forEachIndexed { index, searchMode ->
-                        val selected = mode == searchMode
-                        SegmentedButton(
-                            selected = selected,
-                            onClick = { onModeChange(searchMode) },
-                            shape = SegmentedButtonDefaults.itemShape(index, SearchMode.entries.size)
-                        ) {
-                            Text(if (searchMode == SearchMode.TITLE) "Title" else "Full text")
-                        }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = query,
-                    onValueChange = onQueryChange,
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    placeholder = { Text(if (mode == SearchMode.TITLE) "Search article titles" else "Search inside articles") },
-                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-                    keyboardOptions = KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
-                    keyboardActions = KeyboardActions(onSearch = { keyboard?.hide() }),
-                    shape = RoundedCornerShape(12.dp)
-                )
-                Spacer(Modifier.height(12.dp))
-                when {
-                    mode == SearchMode.FULL_TEXT && !session.hasFullTextIndex ->
-                        Text("This ZIM has no full-text index. Title search is available.", color = Muted, fontSize = 13.sp)
-                    error != null -> Text(error, color = Color(0xFF9B352D), fontSize = 13.sp)
-                    searching -> Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp, color = Leaf)
-                        Spacer(Modifier.width(10.dp))
-                        Text("Searching this archive", color = Muted, fontSize = 13.sp)
-                    }
-                    query.isNotBlank() && results.isEmpty() -> Text("No matches", color = Muted, fontSize = 13.sp)
-                }
-                LazyColumn(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(results, key = { it.path }) { result ->
-                        ResultRow(result = result, onClick = { onOpenArticle(result) })
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun WelcomePanel(
-    modifier: Modifier,
-    opening: Boolean,
-    error: String?,
-    onChooseZim: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .then(modifier)
-            .fillMaxWidth(),
-        horizontalAlignment = Alignment.Start,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Text("Your library,\noffline.", color = Ink, fontSize = 34.sp, lineHeight = 39.sp, fontWeight = FontWeight.Bold)
-        Spacer(Modifier.height(10.dp))
-        Text("Open a ZIM archive from this device to search and read it without a connection.", color = Muted, fontSize = 15.sp, lineHeight = 22.sp)
-        if (error != null) {
-            Spacer(Modifier.height(12.dp))
-            Text(error, color = Color(0xFF9B352D), fontSize = 13.sp)
-        }
-        Spacer(Modifier.height(22.dp))
-        Button(
-            onClick = onChooseZim,
-            enabled = !opening,
-            colors = ButtonDefaults.buttonColors(containerColor = Leaf),
-            shape = RoundedCornerShape(10.dp)
-        ) {
-            if (opening) CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), color = Color.White, strokeWidth = 2.dp)
-            else Icon(Icons.Default.FolderOpen, contentDescription = null)
-            Spacer(Modifier.width(8.dp))
-            Text(if (opening) "Opening archive" else "Choose a ZIM file")
-        }
-        Spacer(Modifier.height(70.dp))
-    }
-}
-
-@Composable
-private fun WebBrowserScreen(initialUrl: String, onBack: () -> Unit) {
     var address by remember(initialUrl) { mutableStateOf(initialUrl) }
-    var loadedAddress by remember(initialUrl) { mutableStateOf<String?>(null) }
+    var loadedAddress by remember(initialUrl) { mutableStateOf<String?>(if (autoLoad) initialUrl else null) }
     var addressError by remember { mutableStateOf<String?>(null) }
     var webView by remember { mutableStateOf<WebView?>(null) }
 
@@ -366,6 +253,7 @@ private fun WebBrowserScreen(initialUrl: String, onBack: () -> Unit) {
         addressError = null
         address = candidate
         loadedAddress = candidate
+        onAddressLoaded(candidate)
     }
 
     fun goBackOrClose() {
@@ -422,7 +310,7 @@ private fun WebBrowserScreen(initialUrl: String, onBack: () -> Unit) {
 }
 
 @Composable
-private fun ResultRow(result: ArticleResult, onClick: () -> Unit) {
+internal fun ResultRow(result: ArticleResult, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
