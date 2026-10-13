@@ -185,8 +185,9 @@ private fun ELOBrowser() {
                 })
             } else if (serverOpen) {
                 WebBrowserScreen(
-                    initialUrl = serverUrl ?: "https://",
+                    initialUrl = serverUrl.orEmpty(),
                     autoLoad = serverUrl != null,
+                    isLibraryServer = true,
                     onAddressLoaded = {
                         preferences.edit().putString("server_url", it).apply()
                         serverUrl = it
@@ -230,6 +231,7 @@ private fun WebBrowserScreen(
     initialUrl: String,
     onBack: () -> Unit,
     autoLoad: Boolean = false,
+    isLibraryServer: Boolean = false,
     onAddressLoaded: (String) -> Unit = {}
 ) {
     var address by remember(initialUrl) { mutableStateOf(initialUrl) }
@@ -274,7 +276,9 @@ private fun WebBrowserScreen(
                 onValueChange = { address = it },
                 modifier = Modifier.weight(1f),
                 singleLine = true,
-                placeholder = { Text("Enter a web address") },
+                placeholder = {
+                    Text(if (isLibraryServer) "http://舊手機IP:8080" else "Enter a web address")
+                },
                 keyboardOptions = KeyboardOptions(
                     keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
                     imeAction = androidx.compose.ui.text.input.ImeAction.Go
@@ -289,23 +293,37 @@ private fun WebBrowserScreen(
         if (addressError != null) {
             Text(addressError!!, color = Color(0xFF9B352D), fontSize = 13.sp, modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp))
         }
-        AndroidView(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            factory = { viewContext ->
-                WebView(viewContext).apply {
-                    webView = this
-                    settings.javaScriptEnabled = true
-                    settings.domStorageEnabled = true
-                    webChromeClient = WebChromeClient()
-                    webViewClient = WebViewClient()
-                }
-            },
-            update = { view ->
-                loadedAddress?.let { target ->
-                    if (view.url != target) view.loadUrl(target)
-                }
+        if (isLibraryServer && loadedAddress == null) {
+            Box(
+                modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "輸入舊手機上的 Kiwix 伺服器網址，然後按右側箭頭連線。\n例如：http://192.168.1.25:8080",
+                    color = Muted,
+                    fontSize = 15.sp,
+                    lineHeight = 23.sp
+                )
             }
-        )
+        } else {
+            AndroidView(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                factory = { viewContext ->
+                    WebView(viewContext).apply {
+                        webView = this
+                        settings.javaScriptEnabled = true
+                        settings.domStorageEnabled = true
+                        webChromeClient = WebChromeClient()
+                        webViewClient = WebViewClient()
+                    }
+                },
+                update = { view ->
+                    loadedAddress?.let { target ->
+                        if (view.url != target) view.loadUrl(target)
+                    }
+                }
+            )
+        }
     }
 }
 
