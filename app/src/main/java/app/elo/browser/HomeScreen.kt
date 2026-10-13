@@ -37,6 +37,8 @@ import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
+import androidx.compose.material3.ScrollableTabRow
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
@@ -113,10 +115,12 @@ private fun PermissionRow(title: String, description: String) {
 internal fun HomeScreen(
     serverUrl: String?,
     query: String,
+    category: SearchCategory,
     results: List<ArticleResult>,
     searching: Boolean,
     error: String?,
     onQueryChange: (String) -> Unit,
+    onCategoryChange: (SearchCategory) -> Unit,
     onSubmit: () -> Unit,
     onOpenServer: () -> Unit,
     onOpenArticle: (ArticleResult) -> Unit
@@ -149,33 +153,16 @@ internal fun HomeScreen(
         )
 
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            if (serverUrl.isNullOrBlank()) {
-                Column(
-                    modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.Center,
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        "先點左下角的 + 設定舊手機圖書館伺服器，\n之後輸入關鍵字即可搜尋。",
-                        color = Muted,
-                        fontSize = 14.sp,
-                        lineHeight = 21.sp,
-                        textAlign = TextAlign.Center
-                    )
-                    if (error != null) {
-                        Spacer(Modifier.height(12.dp))
-                        Text(error, color = ErrorRed, fontSize = 13.sp, textAlign = TextAlign.Center)
-                    }
-                }
-            } else {
-                SearchResults(
-                    query = query,
-                    results = results,
-                    searching = searching,
-                    error = error,
-                    onOpenArticle = onOpenArticle
-                )
-            }
+            SearchResults(
+                serverConfigured = !serverUrl.isNullOrBlank(),
+                query = query,
+                category = category,
+                results = results,
+                searching = searching,
+                error = error,
+                onCategoryChange = onCategoryChange,
+                onOpenArticle = onOpenArticle
+            )
         }
 
         CommandInput(
@@ -190,29 +177,64 @@ internal fun HomeScreen(
 
 @Composable
 private fun SearchResults(
+    serverConfigured: Boolean,
     query: String,
+    category: SearchCategory,
     results: List<ArticleResult>,
     searching: Boolean,
     error: String?,
+    onCategoryChange: (SearchCategory) -> Unit,
     onOpenArticle: (ArticleResult) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
-        when {
-            error != null -> Text(error, color = ErrorRed, fontSize = 13.sp)
-            searching -> Row(verticalAlignment = Alignment.CenterVertically) {
-                CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp, color = Leaf)
-                Spacer(Modifier.width(10.dp))
-                Text("搜尋中…", color = Muted, fontSize = 13.sp)
-            }
-            query.isNotBlank() && !looksLikeUrl(query.trim()) && !searching && results.isEmpty() ->
-                Text("找不到結果", color = Muted, fontSize = 13.sp)
-        }
-        LazyColumn(
-            modifier = Modifier.weight(1f).fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ScrollableTabRow(
+            selectedTabIndex = SearchCategory.entries.indexOf(category),
+            edgePadding = 0.dp
         ) {
-            items(results, key = { it.path }) { result ->
-                ResultRow(result = result, onClick = { onOpenArticle(result) })
+            SearchCategory.entries.forEach { item ->
+                Tab(
+                    selected = category == item,
+                    onClick = { onCategoryChange(item) },
+                    text = { Text(item.label, maxLines = 1) }
+                )
+            }
+        }
+        if (category == SearchCategory.AI) {
+            Box(
+                modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    "AI 模式尚未連接 Qwen。\n先在舊手機啟動模型 API，再設定伺服器網址即可接入。",
+                    color = Muted,
+                    fontSize = 14.sp,
+                    lineHeight = 22.sp,
+                    textAlign = TextAlign.Center
+                )
+            }
+        } else {
+            Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                when {
+                    error != null -> Text(error, color = ErrorRed, fontSize = 13.sp)
+                    searching -> Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp, color = Leaf)
+                        Spacer(Modifier.width(10.dp))
+                        Text("搜尋中…", color = Muted, fontSize = 13.sp)
+                    }
+                    category == SearchCategory.WIKIPEDIA && !serverConfigured ->
+                        Text("請先設定舊手機圖書館伺服器。", color = Muted, fontSize = 13.sp)
+                    query.isNotBlank() && !looksLikeUrl(query.trim()) && results.isEmpty() ->
+                        Text("找不到結果", color = Muted, fontSize = 13.sp)
+                    query.isBlank() -> Text("輸入關鍵字開始搜尋", color = Muted, fontSize = 13.sp)
+                }
+                LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(results, key = { "${it.imageUrl.orEmpty()}:${it.path}" }) { result ->
+                        ResultRow(result = result, onClick = { onOpenArticle(result) })
+                    }
+                }
             }
         }
     }

@@ -11,10 +11,11 @@ import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 
 internal object LibraryServer {
-    fun search(serverUrl: String, term: String): List<ArticleResult> {
+    fun search(serverUrl: String, term: String, wikipediaOnly: Boolean = false): List<ArticleResult> {
         val baseUrl = serverUrl.trim().trimEnd('/')
         val encodedTerm = URLEncoder.encode(term, StandardCharsets.UTF_8.name())
-        val connection = URL("$baseUrl/search?pattern=$encodedTerm&format=xml&count=50")
+        val categoryFilter = if (wikipediaOnly) "&books.filter.category=wikipedia" else ""
+        val connection = URL("$baseUrl/search?pattern=$encodedTerm&format=xml&count=50$categoryFilter")
             .openConnection() as HttpURLConnection
         connection.connectTimeout = 8_000
         connection.readTimeout = 30_000
@@ -56,15 +57,15 @@ internal object LibraryServer {
                         snippet = ""
                     } else if (inResult) {
                         when (name) {
-                            "title" -> title = parser.nextText().trim()
+                            "title" -> title = readElementText(parser)
                             "link", "url", "guid" -> {
                                 val href = parser.getAttributeValue(null, "href")
                                 val rel = parser.getAttributeValue(null, "rel")
-                                val value = href ?: parser.nextText().trim()
+                                val value = href ?: readElementText(parser)
                                 if (link == null || rel == "alternate") link = value
                             }
                             "description", "summary", "content", "snippet" ->
-                                snippet = parser.nextText().trim()
+                                snippet = readElementText(parser)
                         }
                     }
                 }
@@ -86,5 +87,18 @@ internal object LibraryServer {
             event = parser.next()
         }
         return results
+    }
+
+    private fun readElementText(parser: XmlPullParser): String {
+        val elementDepth = parser.depth
+        val text = StringBuilder()
+        var event = parser.next()
+        while (event != XmlPullParser.END_TAG || parser.depth != elementDepth) {
+            if (event == XmlPullParser.TEXT || event == XmlPullParser.CDSECT || event == XmlPullParser.ENTITY_REF) {
+                text.append(parser.text.orEmpty())
+            }
+            event = parser.next()
+        }
+        return text.toString().trim()
     }
 }

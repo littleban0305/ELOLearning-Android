@@ -16,12 +16,20 @@ private const val MAX_RESULTS = 40
 internal data class ArticleResult(
     val title: String,
     val path: String,
-    val snippet: String = ""
+    val snippet: String = "",
+    val imageUrl: String? = null
 )
 
 internal enum class SearchMode {
     TITLE,
     FULL_TEXT
+}
+
+internal enum class SearchCategory(val label: String) {
+    ALL("全部"),
+    AI("AI 模式"),
+    CS("CS 圖鑑"),
+    WIKIPEDIA("維基百科")
 }
 
 internal class ZimSession private constructor(

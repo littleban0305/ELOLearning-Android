@@ -3,6 +3,7 @@ package app.elo.browser
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.text.Html
 import android.view.ViewGroup
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -24,6 +25,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -63,7 +65,9 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
@@ -71,7 +75,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import coil.compose.AsyncImage
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
@@ -79,6 +86,8 @@ internal val Ink = Color(0xFF17352B)
 internal val Leaf = Color(0xFF176B4A)
 internal val Paper = Color(0xFFF4F7F1)
 internal val Muted = Color(0xFF68776F)
+
+private data class SearchOutcome(val results: List<ArticleResult>, val message: String? = null)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -94,31 +103,63 @@ private fun ELOBrowser() {
     val preferences = remember { context.getSharedPreferences("elo-browser", android.content.Context.MODE_PRIVATE) }
     var error by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
+    var category by remember { mutableStateOf(SearchCategory.ALL) }
     var results by remember { mutableStateOf<List<ArticleResult>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
     var article by remember { mutableStateOf<ArticleResult?>(null) }
+    var selectedSkin by remember { mutableStateOf<ArticleResult?>(null) }
     var browserUrl by remember { mutableStateOf<String?>(null) }
     var serverUrl by remember { mutableStateOf(preferences.getString("server_url", null)) }
     var serverOpen by remember { mutableStateOf(false) }
     var onboarded by remember { mutableStateOf(preferences.getBoolean("onboarded", false)) }
     val keyboard = LocalSoftwareKeyboardController.current
 
-    LaunchedEffect(query, serverUrl, article) {
+    LaunchedEffect(query, serverUrl, category, article, selectedSkin, serverOpen) {
         val activeServerUrl = serverUrl
         val term = query.trim()
-        if (term.isBlank() || activeServerUrl.isNullOrBlank() || article != null || looksLikeUrl(term)) {
+        if (term.isBlank() || category == SearchCategory.AI || article != null || selectedSkin != null ||
+            serverOpen || looksLikeUrl(term)
+        ) {
             results = emptyList()
             searching = false
+            error = null
             return@LaunchedEffect
         }
         delay(280)
         searching = true
         error = null
-        val found = runCatching {
-            withContext(Dispatchers.IO) { LibraryServer.search(activeServerUrl, term) }
+        val outcome = withContext(Dispatchers.IO) {
+            when (category) {
+                SearchCategory.AI -> SearchOutcome(emptyList())
+                SearchCategory.CS -> runCatching { SkinCatalog.search(term) }
+                    .fold({ SearchOutcome(it) }, { SearchOutcome(emptyList(), it.message ?: "CS 圖鑑搜尋失敗。") })
+                SearchCategory.WIKIPEDIA -> {
+                    if (activeServerUrl.isNullOrBlank()) {
+                        SearchOutcome(emptyList(), "請先設定舊手機圖書館伺服器。")
+                    } else {
+                        runCatching { LibraryServer.search(activeServerUrl, term, wikipediaOnly = true) }
+                            .fold({ SearchOutcome(it) }, { SearchOutcome(emptyList(), it.message ?: "維基百科搜尋失敗。") })
+                    }
+                }
+                SearchCategory.ALL -> coroutineScope {
+                    val wikiRequest = async {
+                        if (activeServerUrl.isNullOrBlank()) Result.success(emptyList())
+                        else runCatching { LibraryServer.search(activeServerUrl, term) }
+                    }
+                    val skinRequest = async { runCatching { SkinCatalog.search(term) } }
+                    val wiki = wikiRequest.await()
+                    val skins = skinRequest.await()
+                    val messages = listOfNotNull(
+                        wiki.exceptionOrNull()?.message,
+                        skins.exceptionOrNull()?.message,
+                        if (activeServerUrl.isNullOrBlank()) "尚未設定圖書館伺服器；目前只搜尋 CS 圖鑑。" else null
+                    )
+                    SearchOutcome(wiki.getOrDefault(emptyList()) + skins.getOrDefault(emptyList()), messages.joinToString("\n").ifBlank { null })
+                }
+            }
         }
-        found.onSuccess { results = it }
-            .onFailure { error = it.message ?: "遠端搜尋失敗。"; results = emptyList() }
+        results = outcome.results
+        error = outcome.message
         searching = false
     }
 
@@ -134,7 +175,10 @@ private fun ELOBrowser() {
         }
     }
 
-    BackHandler(article != null) { article = null }
+    BackHandler(article != null || selectedSkin != null) {
+        article = null
+        selectedSkin = null
+    }
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize(), color = Paper) {
@@ -156,12 +200,15 @@ private fun ELOBrowser() {
                 )
             } else if (browserUrl != null) {
                 WebBrowserScreen(initialUrl = browserUrl!!, autoLoad = true, onBack = { browserUrl = null })
+            } else if (selectedSkin != null) {
+                SkinDetailsScreen(skin = selectedSkin!!, onBack = { selectedSkin = null })
             } else if (article != null) {
                 RemoteArticleScreen(article = article!!, onBack = { article = null })
             } else {
                 HomeScreen(
                     serverUrl = serverUrl,
                     query = query,
+                    category = category,
                     results = results,
                     searching = searching,
                     error = error,
@@ -169,9 +216,16 @@ private fun ELOBrowser() {
                         query = it
                         error = null
                     },
+                    onCategoryChange = {
+                        category = it
+                        error = null
+                    },
                     onSubmit = { submit() },
                     onOpenServer = { serverOpen = true },
-                    onOpenArticle = { article = it; keyboard?.hide() }
+                    onOpenArticle = {
+                        if (it.imageUrl != null) selectedSkin = it else article = it
+                        keyboard?.hide()
+                    }
                 )
             }
         }
@@ -288,18 +342,64 @@ internal fun ResultRow(result: ArticleResult, onClick: () -> Unit) {
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White)
     ) {
-        Column(modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
-            Text(result.title, color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
-                maxLines = 2, overflow = TextOverflow.Ellipsis)
-            if (result.snippet.isNotBlank()) {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    result.snippet.replace(Regex("<[^>]*>"), ""),
-                    color = Muted,
-                    fontSize = 13.sp,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            if (result.imageUrl != null) {
+                AsyncImage(
+                    model = result.imageUrl,
+                    contentDescription = result.title,
+                    modifier = Modifier.size(64.dp).clip(RoundedCornerShape(4.dp)),
+                    contentScale = ContentScale.Crop
                 )
+                Spacer(Modifier.width(12.dp))
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(result.title, color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (result.snippet.isNotBlank()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        result.snippet.replace(Regex("<[^>]*>"), ""),
+                        color = Muted,
+                        fontSize = 13.sp,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SkinDetailsScreen(skin: ArticleResult, onBack: () -> Unit) {
+    Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().background(Paper).padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Leaf)
+            }
+            Text(skin.title, color = Ink, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        Column(modifier = Modifier.fillMaxSize().padding(20.dp)) {
+            if (skin.imageUrl != null) {
+                AsyncImage(
+                    model = skin.imageUrl,
+                    contentDescription = skin.title,
+                    modifier = Modifier.fillMaxWidth().height(260.dp),
+                    contentScale = ContentScale.Fit
+                )
+            }
+            Spacer(Modifier.height(16.dp))
+            Text(skin.title, color = Ink, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            val description = Html.fromHtml(skin.snippet, Html.FROM_HTML_MODE_COMPACT).toString().trim()
+            if (description.isNotBlank()) {
+                Spacer(Modifier.height(12.dp))
+                Text(description, color = Muted, fontSize = 15.sp, lineHeight = 22.sp)
             }
         }
     }
