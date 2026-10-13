@@ -17,7 +17,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -241,7 +240,12 @@ private fun HomeScreen(
             }
 
             if (session == null) {
-                WelcomePanel(opening = opening, error = error, onChooseZim = onChooseZim)
+                WelcomePanel(
+                    modifier = Modifier.weight(1f),
+                    opening = opening,
+                    error = error,
+                    onChooseZim = onChooseZim
+                )
             } else {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
                     Column(modifier = Modifier.weight(1f)) {
@@ -303,11 +307,16 @@ private fun HomeScreen(
 }
 
 @Composable
-private fun ColumnScope.WelcomePanel(opening: Boolean, error: String?, onChooseZim: () -> Unit) {
+private fun WelcomePanel(
+    modifier: Modifier,
+    opening: Boolean,
+    error: String?,
+    onChooseZim: () -> Unit
+) {
     Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .weight(1f),
+            .then(modifier)
+            .fillMaxWidth(),
         horizontalAlignment = Alignment.Start,
         verticalArrangement = Arrangement.Center
     ) {
