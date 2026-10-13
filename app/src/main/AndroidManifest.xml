@@ -7,7 +7,7 @@
         android:label="ELOBrowser"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
-        android:usesCleartextTraffic="false"
+        android:usesCleartextTraffic="true"
         tools:replace="android:label">
         <activity
             android:name=".MainActivity"
