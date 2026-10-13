@@ -92,12 +92,8 @@ class MainActivity : ComponentActivity() {
 private fun ELOBrowser() {
     val context = LocalContext.current
     val preferences = remember { context.getSharedPreferences("elo-browser", android.content.Context.MODE_PRIVATE) }
-    var selectedUri by remember { mutableStateOf(preferences.getString("zim_uri", null)?.let { Uri.parse(it) }) }
-    var session by remember { mutableStateOf<ZimSession?>(null) }
-    var opening by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
-    var mode by remember { mutableStateOf(SearchMode.TITLE) }
     var results by remember { mutableStateOf<List<ArticleResult>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
     var article by remember { mutableStateOf<ArticleResult?>(null) }
@@ -105,44 +101,12 @@ private fun ELOBrowser() {
     var serverUrl by remember { mutableStateOf(preferences.getString("server_url", null)) }
     var serverOpen by remember { mutableStateOf(false) }
     var onboarded by remember { mutableStateOf(preferences.getBoolean("onboarded", false)) }
-    val currentSession by rememberUpdatedState(session)
     val keyboard = LocalSoftwareKeyboardController.current
 
-    val zimPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-        if (uri != null) {
-            runCatching {
-                context.contentResolver.takePersistableUriPermission(
-                    uri,
-                    Intent.FLAG_GRANT_READ_URI_PERMISSION
-                )
-            }
-            preferences.edit().putString("zim_uri", uri.toString()).apply()
-            selectedUri = uri
-            query = ""
-            results = emptyList()
-            article = null
-            error = null
-        }
-    }
-
-    LaunchedEffect(selectedUri) {
-        val uri = selectedUri ?: return@LaunchedEffect
-        opening = true
-        error = null
-        withContext(Dispatchers.IO) { session?.close() }
-        session = null
-        val opened = runCatching { withContext(Dispatchers.IO) { ZimSession.open(context, uri) } }
-        if (opened.isSuccess) {
-            session = opened.getOrThrow()
-        } else {
-            error = opened.exceptionOrNull()?.message ?: "Could not open this ZIM file."
-        }
-        opening = false
-    }
-
-    LaunchedEffect(query, mode, session) {
-        val activeSession = session
-        if (query.isBlank() || activeSession == null || article != null || looksLikeUrl(query.trim())) {
+    LaunchedEffect(query, serverUrl, article) {
+        val activeServerUrl = serverUrl
+        val term = query.trim()
+        if (term.isBlank() || activeServerUrl.isNullOrBlank() || article != null || looksLikeUrl(term)) {
             results = emptyList()
             searching = false
             return@LaunchedEffect
@@ -151,15 +115,11 @@ private fun ELOBrowser() {
         searching = true
         error = null
         val found = runCatching {
-            withContext(Dispatchers.IO) { activeSession.search(query.trim(), mode) }
+            withContext(Dispatchers.IO) { LibraryServer.search(activeServerUrl, term) }
         }
         found.onSuccess { results = it }
-            .onFailure { error = it.message ?: "Search failed."; results = emptyList() }
+            .onFailure { error = it.message ?: "遠端搜尋失敗。"; results = emptyList() }
         searching = false
-    }
-
-    androidx.compose.runtime.DisposableEffect(Unit) {
-        onDispose { currentSession?.close() }
     }
 
     fun submit() {
@@ -169,8 +129,8 @@ private fun ELOBrowser() {
         if (looksLikeUrl(text)) {
             browserUrl = normalizeUrl(text)
             query = ""
-        } else if (session == null) {
-            error = "請先點左下角的 + 載入 ZIM 檔案，才能離線搜尋關鍵字。"
+        } else if (serverUrl.isNullOrBlank()) {
+            error = "請先點左下角的 + 設定舊手機圖書館伺服器。"
         }
     }
 
@@ -196,28 +156,20 @@ private fun ELOBrowser() {
                 )
             } else if (browserUrl != null) {
                 WebBrowserScreen(initialUrl = browserUrl!!, autoLoad = true, onBack = { browserUrl = null })
-            } else if (article != null && session != null) {
-                ArticleScreen(
-                    session = session!!,
-                    article = article!!,
-                    onBack = { article = null }
-                )
+            } else if (article != null) {
+                RemoteArticleScreen(article = article!!, onBack = { article = null })
             } else {
                 HomeScreen(
-                    session = session,
-                    opening = opening,
+                    serverUrl = serverUrl,
                     query = query,
-                    mode = mode,
                     results = results,
                     searching = searching,
                     error = error,
                     onQueryChange = {
                         query = it
-                        if (session == null) error = null
+                        error = null
                     },
-                    onModeChange = { mode = it },
                     onSubmit = { submit() },
-                    onChooseZim = { zimPicker.launch(arrayOf("*/*")) },
                     onOpenServer = { serverOpen = true },
                     onOpenArticle = { article = it; keyboard?.hide() }
                 )
@@ -350,6 +302,43 @@ internal fun ResultRow(result: ArticleResult, onClick: () -> Unit) {
                 )
             }
         }
+    }
+}
+
+@Composable
+private fun RemoteArticleScreen(article: ArticleResult, onBack: () -> Unit) {
+    Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Paper)
+                .padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Leaf)
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(article.title, color = Ink, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text("舊手機圖書館", color = Muted, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { context ->
+                WebView(context).apply {
+                    layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                    settings.javaScriptEnabled = true
+                    settings.domStorageEnabled = true
+                    webChromeClient = WebChromeClient()
+                    webViewClient = WebViewClient()
+                    loadUrl(article.path)
+                }
+            },
+            update = { webView ->
+                if (webView.url != article.path) webView.loadUrl(article.path)
+            }
+        )
     }
 }
 

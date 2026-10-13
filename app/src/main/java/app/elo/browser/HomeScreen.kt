@@ -111,17 +111,13 @@ private fun PermissionRow(title: String, description: String) {
 
 @Composable
 internal fun HomeScreen(
-    session: ZimSession?,
-    opening: Boolean,
+    serverUrl: String?,
     query: String,
-    mode: SearchMode,
     results: List<ArticleResult>,
     searching: Boolean,
     error: String?,
     onQueryChange: (String) -> Unit,
-    onModeChange: (SearchMode) -> Unit,
     onSubmit: () -> Unit,
-    onChooseZim: () -> Unit,
     onOpenServer: () -> Unit,
     onOpenArticle: (ArticleResult) -> Unit
 ) {
@@ -143,11 +139,7 @@ internal fun HomeScreen(
                 .padding(top = 28.dp)
         )
         Text(
-            text = when {
-                opening -> "正在開啟離線資料庫…"
-                session != null -> session.title
-                else -> "尚未載入離線資料庫"
-            },
+            text = if (serverUrl.isNullOrBlank()) "尚未設定圖書館伺服器" else "圖書館伺服器：$serverUrl",
             color = Muted,
             fontSize = 13.sp,
             textAlign = TextAlign.Center,
@@ -157,15 +149,14 @@ internal fun HomeScreen(
         )
 
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            if (session == null) {
+            if (serverUrl.isNullOrBlank()) {
                 Column(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.Center,
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    if (opening) CircularProgressIndicator(color = Leaf)
                     Text(
-                        "輸入網址即可瀏覽網頁。\n點左下角的 + 載入 ZIM 檔案後，可離線搜尋。",
+                        "先點左下角的 + 設定舊手機圖書館伺服器，\n之後輸入關鍵字即可搜尋。",
                         color = Muted,
                         fontSize = 14.sp,
                         lineHeight = 21.sp,
@@ -178,13 +169,10 @@ internal fun HomeScreen(
                 }
             } else {
                 SearchResults(
-                    session = session,
                     query = query,
-                    mode = mode,
                     results = results,
                     searching = searching,
                     error = error,
-                    onModeChange = onModeChange,
                     onOpenArticle = onOpenArticle
                 )
             }
@@ -194,7 +182,6 @@ internal fun HomeScreen(
             query = query,
             onQueryChange = onQueryChange,
             onSubmit = onSubmit,
-            onChooseZim = onChooseZim,
             onOpenServer = onOpenServer
         )
         Spacer(Modifier.height(12.dp))
@@ -203,38 +190,21 @@ internal fun HomeScreen(
 
 @Composable
 private fun SearchResults(
-    session: ZimSession,
     query: String,
-    mode: SearchMode,
     results: List<ArticleResult>,
     searching: Boolean,
     error: String?,
-    onModeChange: (SearchMode) -> Unit,
     onOpenArticle: (ArticleResult) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
-        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-            SearchMode.entries.forEachIndexed { index, searchMode ->
-                SegmentedButton(
-                    selected = mode == searchMode,
-                    onClick = { onModeChange(searchMode) },
-                    shape = SegmentedButtonDefaults.itemShape(index, SearchMode.entries.size)
-                ) {
-                    Text(if (searchMode == SearchMode.TITLE) "標題" else "全文")
-                }
-            }
-        }
-        Spacer(Modifier.height(12.dp))
         when {
-            mode == SearchMode.FULL_TEXT && !session.hasFullTextIndex ->
-                Text("此 ZIM 沒有全文索引，請改用標題搜尋。", color = Muted, fontSize = 13.sp)
             error != null -> Text(error, color = ErrorRed, fontSize = 13.sp)
             searching -> Row(verticalAlignment = Alignment.CenterVertically) {
                 CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp, color = Leaf)
                 Spacer(Modifier.width(10.dp))
                 Text("搜尋中…", color = Muted, fontSize = 13.sp)
             }
-            query.isNotBlank() && !looksLikeUrl(query.trim()) && results.isEmpty() ->
+            query.isNotBlank() && !looksLikeUrl(query.trim()) && !searching && results.isEmpty() ->
                 Text("找不到結果", color = Muted, fontSize = 13.sp)
         }
         LazyColumn(
@@ -253,7 +223,6 @@ private fun CommandInput(
     query: String,
     onQueryChange: (String) -> Unit,
     onSubmit: () -> Unit,
-    onChooseZim: () -> Unit,
     onOpenServer: () -> Unit
 ) {
     var menuOpen by remember { mutableStateOf(false) }
@@ -273,12 +242,7 @@ private fun CommandInput(
                 }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
                     DropdownMenuItem(
-                        text = { Text("選擇 ZIM 檔案") },
-                        leadingIcon = { Icon(Icons.Default.FolderOpen, contentDescription = null) },
-                        onClick = { menuOpen = false; onChooseZim() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("連線圖書館伺服器") },
+                        text = { Text("設定圖書館伺服器") },
                         leadingIcon = { Icon(Icons.Default.Cloud, contentDescription = null) },
                         onClick = { menuOpen = false; onOpenServer() }
                     )
@@ -289,7 +253,7 @@ private fun CommandInput(
                 onValueChange = onQueryChange,
                 modifier = Modifier.weight(1f),
                 singleLine = true,
-                placeholder = { Text("請輸入網址或關鍵字", color = Muted) },
+                placeholder = { Text("輸入網址或搜尋圖書館", color = Muted) },
                 colors = TextFieldDefaults.colors(
                     focusedContainerColor = Color.Transparent,
                     unfocusedContainerColor = Color.Transparent,
