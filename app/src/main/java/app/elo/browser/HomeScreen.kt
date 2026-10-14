@@ -1,5 +1,12 @@
 package app.elo.browser
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -120,6 +127,7 @@ internal fun HomeScreen(
     serverUrl: String?,
     aiServerUrl: String,
     query: String,
+    submittedQuery: String,
     category: SearchCategory,
     aiSummary: String?,
     aiSummaryError: String?,
@@ -133,8 +141,6 @@ internal fun HomeScreen(
     onCategoryChange: (SearchCategory) -> Unit,
     onOpenSettings: () -> Unit,
     onFollowUp: () -> Unit,
-    onAiServerUrlChange: (String) -> Unit,
-    onSaveAiServer: () -> Unit,
     onSubmit: () -> Unit,
     onOpenServer: () -> Unit,
     onOpenArticle: (ArticleResult) -> Unit
@@ -146,63 +152,79 @@ internal fun HomeScreen(
             .imePadding()
             .padding(horizontal = 20.dp)
     ) {
-        Text(
-            "ELOBrowser",
-            color = Ink,
-            fontSize = 27.sp,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Start,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 12.dp)
-        )
-        Text(
-            text = if (serverUrl.isNullOrBlank()) "尚未設定圖書館伺服器" else "圖書館伺服器：$serverUrl",
-            color = Muted,
-            fontSize = 12.sp,
-            maxLines = 1,
-            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-            textAlign = TextAlign.Start,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 2.dp, bottom = 10.dp)
-        )
-
-        CommandInput(
-            query = query,
-            category = category,
-            sendEnabled = query.isNotBlank() && !(category == SearchCategory.AI && aiBusy),
-            onQueryChange = onQueryChange,
-            onSubmit = onSubmit,
-            onOpenServer = onOpenServer
-        )
-        Spacer(Modifier.height(8.dp))
-
-        Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
-            SearchResults(
-                serverConfigured = !serverUrl.isNullOrBlank(),
-                aiServerUrl = aiServerUrl,
-                query = query,
-                category = category,
-                aiSummary = aiSummary,
-                aiSummaryError = aiSummaryError,
-                aiSummaryLoading = aiSummaryLoading,
-                aiMessages = aiMessages,
-                aiBusy = aiBusy,
-                results = results,
-                searching = searching,
-                error = error,
-                onCategoryChange = onCategoryChange,
-                onOpenSettings = onOpenSettings,
-                onFollowUp = onFollowUp,
-                onAiServerUrlChange = onAiServerUrlChange,
-                onSaveAiServer = onSaveAiServer,
-                onOpenArticle = onOpenArticle
-            )
+        AnimatedContent(
+            targetState = submittedQuery.isNotBlank(),
+            modifier = Modifier.weight(1f).fillMaxWidth(),
+            transitionSpec = {
+                (fadeIn(tween(240)) + slideInVertically(tween(240)) { it / 12 }) togetherWith
+                    (fadeOut(tween(160)) + slideOutVertically(tween(160)) { -it / 12 })
+            },
+            label = "search home transition"
+        ) { hasSearched ->
+            if (hasSearched) {
+                Column(modifier = Modifier.fillMaxSize()) {
+                    BrandTitle(Modifier.padding(top = 4.dp, bottom = 10.dp))
+                    CommandInput(
+                        query = query,
+                        category = category,
+                        sendEnabled = query.isNotBlank() && !(category == SearchCategory.AI && aiBusy),
+                        onQueryChange = onQueryChange,
+                        onSubmit = onSubmit,
+                        onOpenServer = onOpenServer
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    SearchResults(
+                        serverConfigured = !serverUrl.isNullOrBlank(),
+                        aiServerUrl = aiServerUrl,
+                        query = submittedQuery,
+                        category = category,
+                        aiSummary = aiSummary,
+                        aiSummaryError = aiSummaryError,
+                        aiSummaryLoading = aiSummaryLoading,
+                        aiMessages = aiMessages,
+                        aiBusy = aiBusy,
+                        results = results,
+                        searching = searching,
+                        error = error,
+                        onCategoryChange = onCategoryChange,
+                        onOpenSettings = onOpenSettings,
+                        onFollowUp = onFollowUp,
+                        onOpenArticle = onOpenArticle
+                    )
+                }
+            } else {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        BrandTitle()
+                        Spacer(Modifier.height(18.dp))
+                        CommandInput(
+                            query = query,
+                            category = category,
+                            sendEnabled = query.isNotBlank() && !(category == SearchCategory.AI && aiBusy),
+                            onQueryChange = onQueryChange,
+                            onSubmit = onSubmit,
+                            onOpenServer = onOpenServer
+                        )
+                    }
+                }
+            }
         }
-
-        Spacer(Modifier.height(4.dp))
     }
+}
+
+@Composable
+private fun BrandTitle(modifier: Modifier = Modifier) {
+    Text(
+        "ELOBrowser",
+        color = Ink,
+        fontSize = 30.sp,
+        fontWeight = FontWeight.Bold,
+        textAlign = TextAlign.Center,
+        modifier = modifier.fillMaxWidth()
+    )
 }
 
 @Composable
@@ -222,8 +244,6 @@ private fun SearchResults(
     onCategoryChange: (SearchCategory) -> Unit,
     onOpenSettings: () -> Unit,
     onFollowUp: () -> Unit,
-    onAiServerUrlChange: (String) -> Unit,
-    onSaveAiServer: () -> Unit,
     onOpenArticle: (ArticleResult) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
@@ -258,55 +278,49 @@ private fun SearchResults(
             )
         } else if (category == SearchCategory.AI) {
             Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    OutlinedTextField(
-                        value = aiServerUrl,
-                        onValueChange = onAiServerUrlChange,
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        label = { Text("Qwen API 網址") },
-                        placeholder = { Text("http://192.168.1.25:8082") }
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Button(onClick = onSaveAiServer, enabled = aiServerUrl.isNotBlank()) {
-                        Text("儲存")
-                    }
-                }
-                Text(
-                    "填入舊手機的 llama-server 網址，例如 http://192.168.1.25:8082",
-                    color = Muted,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
-                )
-                if (error != null) {
-                    Text(error, color = ErrorRed, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp))
-                }
-                LazyColumn(
-                    modifier = Modifier.weight(1f).fillMaxWidth(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    items(aiMessages) { message ->
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (message.role == "user") Color(0xFFE3EEE7) else Color.White
-                        ) {
-                            Column(modifier = Modifier.padding(12.dp)) {
-                                Text(if (message.role == "user") "你" else "Qwen", color = Leaf, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                Spacer(Modifier.height(4.dp))
-                                Text(message.content, color = Ink, fontSize = 14.sp, lineHeight = 20.sp)
+                if (aiServerUrl.isBlank()) {
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("尚未設定 Qwen 連線", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(8.dp))
+                            Button(onClick = onOpenSettings) { Text("設定 Qwen 連線") }
+                            if (error != null) {
+                                Spacer(Modifier.height(8.dp))
+                                Text(error, color = ErrorRed, fontSize = 13.sp, textAlign = TextAlign.Center)
                             }
                         }
                     }
-                    if (aiBusy) {
-                        item {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp, color = Leaf)
-                                Spacer(Modifier.width(10.dp))
-                                Text("Qwen 正在思考…", color = Muted, fontSize = 13.sp)
+                } else {
+                    if (error != null) {
+                        Text(error, color = ErrorRed, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
+                    }
+                    LazyColumn(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(aiMessages) { message ->
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (message.role == "user") Color(0xFFE3EEE7) else Color.White
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(if (message.role == "user") "你" else "Qwen", color = Leaf, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(message.content, color = Ink, fontSize = 14.sp, lineHeight = 20.sp)
+                                }
+                            }
+                        }
+                        if (aiBusy) {
+                            item {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp, color = Leaf)
+                                    Spacer(Modifier.width(10.dp))
+                                    Text("Qwen 正在思考…", color = Muted, fontSize = 13.sp)
+                                }
                             }
                         }
                     }
@@ -468,56 +482,50 @@ private fun CommandInput(
     onSubmit: () -> Unit,
     onOpenServer: () -> Unit
 ) {
-    var menuOpen by remember { mutableStateOf(false) }
-    Surface(
         shape = RoundedCornerShape(30.dp),
         color = Color.White,
         shadowElevation = 4.dp,
         modifier = Modifier.fillMaxWidth()
-    ) {
-        Row(
-            modifier = Modifier.padding(6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box {
-                IconButton(onClick = { menuOpen = true }) {
-                    Icon(Icons.Default.Add, contentDescription = "更多功能", tint = Leaf)
-                }
-                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
-                    DropdownMenuItem(
-                        text = { Text("設定圖書館伺服器") },
-                        leadingIcon = { Icon(Icons.Default.Cloud, contentDescription = null) },
-                        onClick = { menuOpen = false; onOpenServer() }
-                    )
-                }
-            }
-            TextField(
-                value = query,
-                onValueChange = onQueryChange,
-                modifier = Modifier.weight(1f),
-                singleLine = true,
-                placeholder = {
-                    Text(if (category == SearchCategory.AI) "輸入訊息給 Qwen" else "輸入網址或搜尋圖書館", color = Muted)
-                },
+                if (aiServerUrl.isBlank()) {
+                    Box(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("尚未設定 Qwen 連線", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(8.dp))
+                            Button(onClick = onOpenSettings) { Text("設定 Qwen 連線") }
+                        }
+                    }
+                } else {
+                    if (error != null) {
+                        Text(error, color = ErrorRed, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
+                    }
+                    LazyColumn(
+                        modifier = Modifier.weight(1f).fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(aiMessages) { message ->
+                            Surface(
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (message.role == "user") Color(0xFFE3EEE7) else Color.White
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Text(if (message.role == "user") "你" else "Qwen", color = Leaf, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(message.content, color = Ink, fontSize = 14.sp, lineHeight = 20.sp)
+                                }
+                            }
+                        }
+                        if (aiBusy) {
+                            item {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp, color = Leaf)
+                                    Spacer(Modifier.width(10.dp))
+                                    Text("Qwen 正在思考…", color = Muted, fontSize = 13.sp)
+                                }
+                            }
+                        }
+                    }
                 colors = TextFieldDefaults.colors(
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent,
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent
-                ),
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                keyboardActions = KeyboardActions(onSend = { onSubmit() })
-            )
-            FilledIconButton(
-                onClick = onSubmit,
-                enabled = sendEnabled,
-                colors = IconButtonDefaults.filledIconButtonColors(
-                    containerColor = Leaf,
-                    disabledContainerColor = Color(0xFFD3DBD6)
-                )
-            ) {
-                Icon(Icons.Default.ArrowUpward, contentDescription = "發送", tint = Color.White)
-            }
-        }
-    }
-}

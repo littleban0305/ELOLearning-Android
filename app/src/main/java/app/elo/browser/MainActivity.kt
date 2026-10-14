@@ -105,9 +105,9 @@ private fun ELOBrowser() {
     val preferences = remember { context.getSharedPreferences("elo-browser", android.content.Context.MODE_PRIVATE) }
     var error by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
+    var submittedQuery by remember { mutableStateOf("") }
     var category by remember { mutableStateOf(SearchCategory.ALL) }
     var aiServerUrl by remember { mutableStateOf(preferences.getString("ai_server_url", "").orEmpty()) }
-    var aiServerUrlDraft by remember { mutableStateOf(preferences.getString("ai_server_url", "").orEmpty()) }
     var aiMessages by remember { mutableStateOf(emptyList<ChatMessage>()) }
     var aiBusy by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<ArticleResult>>(emptyList()) }
@@ -125,9 +125,9 @@ private fun ELOBrowser() {
     val keyboard = LocalSoftwareKeyboardController.current
     val coroutineScope = rememberCoroutineScope()
 
-    LaunchedEffect(query, serverUrl, category, article, selectedSkin, serverOpen, settingsOpen) {
+    LaunchedEffect(submittedQuery, serverUrl, category, article, selectedSkin, serverOpen, settingsOpen) {
         val activeServerUrl = serverUrl
-        val term = query.trim()
+        val term = submittedQuery.trim()
         if (term.isBlank() || category == SearchCategory.AI || article != null || selectedSkin != null ||
             serverOpen || settingsOpen || looksLikeUrl(term)
         ) {
@@ -177,8 +177,8 @@ private fun ELOBrowser() {
         searching = false
     }
 
-    LaunchedEffect(query, category, aiServerUrl, results, searching, settingsOpen, serverOpen) {
-        val term = query.trim()
+    LaunchedEffect(submittedQuery, category, aiServerUrl, results, searching, settingsOpen, serverOpen) {
+        val term = submittedQuery.trim()
         if (category != SearchCategory.ALL || term.isBlank() || looksLikeUrl(term) || settingsOpen || serverOpen) {
             aiSummary = null
             aiSummaryError = null
@@ -200,8 +200,8 @@ private fun ELOBrowser() {
         delay(500)
         aiSummaryLoading = true
         aiSummaryError = null
-        val sourceResults = results.filter { it.imageUrl == null }.take(4) +
-            results.filter { it.imageUrl != null }.take(4)
+        val sourceResults = results.filter { !it.isCatalogItem }.take(4) +
+            results.filter { it.isCatalogItem }.take(4)
         val sourceText = sourceResults.joinToString("\n") { result ->
             "標題：${result.title}\n摘要：${result.snippet.take(500)}"
         }
@@ -248,8 +248,11 @@ private fun ELOBrowser() {
         if (looksLikeUrl(text)) {
             browserUrl = normalizeUrl(text)
             query = ""
-        } else if (serverUrl.isNullOrBlank()) {
+        } else if (category == SearchCategory.WIKIPEDIA && serverUrl.isNullOrBlank()) {
             error = "請先點左下角的 + 設定舊手機圖書館伺服器。"
+        } else {
+            submittedQuery = text
+            error = null
         }
     }
 
@@ -277,7 +280,6 @@ private fun ELOBrowser() {
                             .apply()
                         serverUrl = library.takeIf(String::isNotBlank)
                         aiServerUrl = qwen
-                        aiServerUrlDraft = qwen
                         settingsOpen = false
                     }
                 )
@@ -301,8 +303,9 @@ private fun ELOBrowser() {
             } else {
                 HomeScreen(
                     serverUrl = serverUrl,
-                    aiServerUrl = aiServerUrlDraft,
+                    aiServerUrl = aiServerUrl,
                     query = query,
+                    submittedQuery = submittedQuery,
                     category = category,
                     aiSummary = aiSummary,
                     aiSummaryError = aiSummaryError,
@@ -323,21 +326,8 @@ private fun ELOBrowser() {
                     onOpenSettings = { settingsOpen = true },
                     onFollowUp = {
                         category = SearchCategory.AI
-                        query = "請深入說明「${query.trim()}」"
+                        query = submittedQuery
                         error = null
-                    },
-                    onAiServerUrlChange = { aiServerUrlDraft = it },
-                    onSaveAiServer = {
-                        val url = aiServerUrlDraft.trim().trimEnd('/')
-                        val uri = Uri.parse(url)
-                        if (uri.scheme !in setOf("http", "https") || uri.host.isNullOrBlank()) {
-                            error = "請輸入有效網址，例如 http://192.168.1.25:8082。"
-                        } else {
-                            preferences.edit().putString("ai_server_url", url).apply()
-                            aiServerUrl = url
-                            aiServerUrlDraft = url
-                            error = null
-                        }
                     },
                     onSubmit = { submit() },
                     onOpenServer = { serverOpen = true },
