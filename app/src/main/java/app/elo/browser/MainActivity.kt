@@ -517,39 +517,35 @@ private fun isValidHttpUrl(value: String): Boolean {
 
 @Composable
 internal fun ResultRow(result: ArticleResult, onClick: () -> Unit) {
-    Card(
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = Color.White)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.Top
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (result.imageUrl != null) {
-                AsyncImage(
-                    model = result.imageUrl,
-                    contentDescription = result.title,
-                    modifier = Modifier.size(64.dp).clip(RoundedCornerShape(4.dp)),
-                    contentScale = ContentScale.Crop
+        if (result.imageUrl != null) {
+            AsyncImage(
+                model = result.imageUrl,
+                contentDescription = result.title,
+                modifier = Modifier.size(64.dp).clip(RoundedCornerShape(4.dp)),
+                contentScale = ContentScale.Crop
+            )
+            Spacer(Modifier.width(12.dp))
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(result.title, color = Leaf, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (result.snippet.isNotBlank()) {
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    result.snippet.replace(Regex("<[^>]*>"), ""),
+                    color = Muted,
+                    fontSize = 13.sp,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
                 )
-                Spacer(Modifier.width(12.dp))
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(result.title, color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis)
-                if (result.snippet.isNotBlank()) {
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        result.snippet.replace(Regex("<[^>]*>"), ""),
-                        color = Muted,
-                        fontSize = 13.sp,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
             }
         }
     }

@@ -149,22 +149,34 @@ internal fun HomeScreen(
         Text(
             "ELOBrowser",
             color = Ink,
-            fontSize = 34.sp,
+            fontSize = 27.sp,
             fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center,
+            textAlign = TextAlign.Start,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 28.dp)
+                .padding(top = 12.dp)
         )
         Text(
             text = if (serverUrl.isNullOrBlank()) "尚未設定圖書館伺服器" else "圖書館伺服器：$serverUrl",
             color = Muted,
-            fontSize = 13.sp,
-            textAlign = TextAlign.Center,
+            fontSize = 12.sp,
+            maxLines = 1,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            textAlign = TextAlign.Start,
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(top = 4.dp, bottom = 16.dp)
+                .padding(top = 2.dp, bottom = 10.dp)
         )
+
+        CommandInput(
+            query = query,
+            category = category,
+            sendEnabled = query.isNotBlank() && !(category == SearchCategory.AI && aiBusy),
+            onQueryChange = onQueryChange,
+            onSubmit = onSubmit,
+            onOpenServer = onOpenServer
+        )
+        Spacer(Modifier.height(8.dp))
 
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             SearchResults(
@@ -189,15 +201,7 @@ internal fun HomeScreen(
             )
         }
 
-        CommandInput(
-            query = query,
-            category = category,
-            sendEnabled = query.isNotBlank() && !(category == SearchCategory.AI && aiBusy),
-            onQueryChange = onQueryChange,
-            onSubmit = onSubmit,
-            onOpenServer = onOpenServer
-        )
-        Spacer(Modifier.height(12.dp))
+        Spacer(Modifier.height(4.dp))
     }
 }
 
@@ -225,12 +229,16 @@ private fun SearchResults(
     Column(modifier = Modifier.fillMaxSize()) {
         ScrollableTabRow(
             selectedTabIndex = SearchCategory.entries.indexOf(category),
+            containerColor = Paper,
+            contentColor = Leaf,
             edgePadding = 0.dp
         ) {
             SearchCategory.entries.forEach { item ->
                 Tab(
                     selected = category == item,
                     onClick = { onCategoryChange(item) },
+                    selectedContentColor = Leaf,
+                    unselectedContentColor = Muted,
                     text = { Text(item.label, maxLines = 1) }
                 )
             }
