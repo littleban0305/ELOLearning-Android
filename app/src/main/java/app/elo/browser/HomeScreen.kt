@@ -64,6 +64,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
@@ -71,6 +73,7 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 
 private val ErrorRed = Color(0xFF9B352D)
 
@@ -203,6 +206,7 @@ internal fun HomeScreen(
     aiSummaryError: String?,
     aiSummaryLoading: Boolean,
     aiMessages: List<ChatMessage>,
+    aiFollowUpDraft: String,
     aiBusy: Boolean,
     results: List<ArticleResult>,
     searching: Boolean,
@@ -210,11 +214,14 @@ internal fun HomeScreen(
     onQueryChange: (String) -> Unit,
     onCategoryChange: (SearchCategory) -> Unit,
     onOpenSettings: () -> Unit,
+    onAiFollowUpChange: (String) -> Unit,
+    onSendAiFollowUp: () -> Unit,
     onDownloadLocalModel: () -> Unit,
     onFollowUp: () -> Unit,
     onSubmit: () -> Unit,
     onOpenServer: () -> Unit,
-    onOpenArticle: (ArticleResult) -> Unit
+    onOpenArticle: (ArticleResult) -> Unit,
+    onOpenSkinGroup: (String, List<ArticleResult>) -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -239,7 +246,7 @@ internal fun HomeScreen(
                         query = query,
                         category = category,
                         usingGemini = usingGemini,
-                        sendEnabled = query.isNotBlank() && !(category == SearchCategory.AI && aiBusy),
+                            sendEnabled = query.isNotBlank(),
                         onQueryChange = onQueryChange,
                         onSubmit = onSubmit,
                         onOpenServer = onOpenServer,
@@ -258,15 +265,19 @@ internal fun HomeScreen(
                         aiSummaryError = aiSummaryError,
                         aiSummaryLoading = aiSummaryLoading,
                         aiMessages = aiMessages,
+                        aiFollowUpDraft = aiFollowUpDraft,
                         aiBusy = aiBusy,
                         results = results,
                         searching = searching,
                         error = error,
                         onCategoryChange = onCategoryChange,
                         onOpenSettings = onOpenSettings,
+                        onAiFollowUpChange = onAiFollowUpChange,
+                        onSendAiFollowUp = onSendAiFollowUp,
                         onDownloadLocalModel = onDownloadLocalModel,
                         onFollowUp = onFollowUp,
-                        onOpenArticle = onOpenArticle
+                        onOpenArticle = onOpenArticle,
+                        onOpenSkinGroup = onOpenSkinGroup
                     )
                 }
             } else {
@@ -281,7 +292,7 @@ internal fun HomeScreen(
                             query = query,
                             category = category,
                             usingGemini = usingGemini,
-                            sendEnabled = query.isNotBlank() && !(category == SearchCategory.AI && aiBusy),
+                                sendEnabled = query.isNotBlank(),
                             onQueryChange = onQueryChange,
                             onSubmit = onSubmit,
                             onOpenServer = onOpenServer,
@@ -319,15 +330,19 @@ private fun SearchResults(
     aiSummaryError: String?,
     aiSummaryLoading: Boolean,
     aiMessages: List<ChatMessage>,
+    aiFollowUpDraft: String,
     aiBusy: Boolean,
     results: List<ArticleResult>,
     searching: Boolean,
     error: String?,
     onCategoryChange: (SearchCategory) -> Unit,
     onOpenSettings: () -> Unit,
+    onAiFollowUpChange: (String) -> Unit,
+    onSendAiFollowUp: () -> Unit,
     onDownloadLocalModel: () -> Unit,
     onFollowUp: () -> Unit,
-    onOpenArticle: (ArticleResult) -> Unit
+    onOpenArticle: (ArticleResult) -> Unit,
+    onOpenSkinGroup: (String, List<ArticleResult>) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
         ScrollableTabRow(
@@ -428,17 +443,28 @@ private fun SearchResults(
                             }
                         }
                     }
+                    AiFollowUpInput(
+                        value = aiFollowUpDraft,
+                        enabled = !aiBusy,
+                        usingGemini = usingGemini,
+                        onValueChange = onAiFollowUpChange,
+                        onSubmit = onSendAiFollowUp
+                    )
                 }
             }
         } else {
             var page by remember(query, category) { mutableStateOf(0) }
-            val categoryResults = when (category) {
-                SearchCategory.CS -> results.filter { it.isCatalogItem }
-                SearchCategory.WIKIPEDIA -> results.filter { !it.isCatalogItem }
-                else -> emptyList()
+            val weaponGroups = results.filter { it.isCatalogItem }
+                .groupBy { it.weaponName ?: "其他武器" }
+                .toList()
+            val articleResults = results.filter { !it.isCatalogItem }
+            val pageCount = when (category) {
+                SearchCategory.CS -> ((weaponGroups.size + 19) / 20).coerceAtLeast(1)
+                else -> ((articleResults.size + 19) / 20).coerceAtLeast(1)
             }
-            val pageCount = ((categoryResults.size + 19) / 20).coerceAtLeast(1)
-            val pageResults = categoryResults.drop(page * 20).take(20)
+            val pageWeaponGroups = weaponGroups.drop(page * 20).take(20)
+            val pageArticles = articleResults.drop(page * 20).take(20)
+            val hasPageItems = if (category == SearchCategory.CS) weaponGroups.isNotEmpty() else articleResults.isNotEmpty()
             Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 when {
                     error != null -> Text(error, color = ErrorRed, fontSize = 13.sp)
@@ -449,11 +475,11 @@ private fun SearchResults(
                     }
                     category == SearchCategory.WIKIPEDIA && !serverConfigured ->
                         Text("請先設定舊手機圖書館伺服器。", color = Muted, fontSize = 13.sp)
-                    query.isNotBlank() && !looksLikeUrl(query.trim()) && results.isEmpty() ->
+                    query.isNotBlank() && !looksLikeUrl(query.trim()) && !searching && results.isEmpty() ->
                         Text("找不到結果", color = Muted, fontSize = 13.sp)
                     query.isBlank() -> Text("輸入關鍵字開始搜尋", color = Muted, fontSize = 13.sp)
                 }
-                if (categoryResults.isNotEmpty()) {
+                if (hasPageItems) {
                     PageControls(page = page, pageCount = pageCount, onPageChange = { page = it })
                 }
                 LazyColumn(
@@ -461,21 +487,18 @@ private fun SearchResults(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     if (category == SearchCategory.CS) {
-                        pageResults.groupBy { it.weaponName ?: "其他武器" }.forEach { (weapon, skins) ->
-                            item(key = "weapon:$weapon") {
-                                Text(weapon, color = Ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-                            }
-                            items(skins, key = { it.path }) { result ->
-                                ResultRow(result = result, onClick = { onOpenArticle(result) })
+                        items(pageWeaponGroups, key = { it.first }) { (weapon, variants) ->
+                            WeaponGroupButton(weapon, variants) {
+                                onOpenSkinGroup(weapon, variants)
                             }
                         }
                     } else {
-                        items(pageResults, key = { it.path }) { result ->
+                        items(pageArticles, key = { it.path }) { result ->
                             ResultRow(result = result, onClick = { onOpenArticle(result) })
                         }
                     }
                 }
-                if (categoryResults.isNotEmpty()) {
+                if (hasPageItems) {
                     PageControls(page = page, pageCount = pageCount, onPageChange = { page = it })
                 }
             }
@@ -496,10 +519,14 @@ private fun AllSearchResults(
     localAiUnavailable: Boolean,
     onFollowUp: () -> Unit,
     onCategoryChange: (SearchCategory) -> Unit,
-    onOpenArticle: (ArticleResult) -> Unit
+    onOpenArticle: (ArticleResult) -> Unit,
+    onOpenSkinGroup: (String, List<ArticleResult>) -> Unit
 ) {
     val wikiResults = results.filter { !it.isCatalogItem }.take(20)
-    val skinResults = results.filter { it.isCatalogItem }.take(20)
+    val skinGroups = results.filter { it.isCatalogItem }
+        .groupBy { it.weaponName ?: "其他武器" }
+        .toList()
+        .take(20)
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
@@ -543,18 +570,13 @@ private fun AllSearchResults(
         item {
             SectionHeading("CS 圖鑑", onClick = { onCategoryChange(SearchCategory.CS) })
         }
-        if (skinResults.isEmpty() && query.isNotBlank()) {
+        if (skinGroups.isEmpty() && query.isNotBlank()) {
             item { Text("沒有 CS 圖鑑結果", color = Muted, fontSize = 13.sp) }
         }
-        skinResults.groupBy { it.weaponName ?: "其他武器" }.forEach { (weapon, skins) ->
-            item(key = "all-weapon:$weapon") {
-                Text(weapon, color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            }
-            items(skins, key = { it.path }) { result ->
-                ResultRow(result = result, onClick = { onOpenArticle(result) })
-            }
+        items(skinGroups, key = { it.first }) { (weapon, variants) ->
+            WeaponGroupButton(weapon, variants) { onOpenSkinGroup(weapon, variants) }
         }
-        if (skinResults.isNotEmpty()) {
+        if (skinGroups.isNotEmpty()) {
             item { TextButton(onClick = { onCategoryChange(SearchCategory.CS) }) { Text("查看更多 CS 圖鑑結果") } }
         }
     }
@@ -568,6 +590,39 @@ private fun SectionHeading(title: String, onClick: () -> Unit) {
     ) {
         Text(title, modifier = Modifier.weight(1f), color = Ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
         TextButton(onClick = onClick) { Text("查看更多") }
+    }
+}
+
+@Composable
+private fun WeaponGroupButton(
+    weaponName: String,
+    variants: List<ArticleResult>,
+    onClick: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(8.dp),
+        color = Color.White
+    ) {
+        Row(
+            modifier = Modifier.padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            variants.firstOrNull()?.imageUrl?.let { imageUrl ->
+                AsyncImage(
+                    model = imageUrl,
+                    contentDescription = weaponName,
+                    modifier = Modifier.width(52.dp).height(52.dp).clip(RoundedCornerShape(4.dp)),
+                    contentScale = ContentScale.Fit
+                )
+                Spacer(Modifier.width(12.dp))
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(weaponName, color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text("${variants.size} 個磨損／外觀版本", color = Muted, fontSize = 12.sp)
+            }
+            Text("查看", color = Leaf, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+        }
     }
 }
 
@@ -656,6 +711,50 @@ private fun CommandInput(
                 )
             ) {
                 Icon(Icons.Default.ArrowUpward, contentDescription = "發送", tint = Color.White)
+            }
+        }
+    }
+}
+
+@Composable
+private fun AiFollowUpInput(
+    value: String,
+    enabled: Boolean,
+    usingGemini: Boolean,
+    onValueChange: (String) -> Unit,
+    onSubmit: () -> Unit
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        color = Color.White,
+        shadowElevation = 2.dp
+    ) {
+        Row(
+            modifier = Modifier.padding(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            TextField(
+                value = value,
+                onValueChange = onValueChange,
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                placeholder = { Text(if (usingGemini) "向 Gemini 提出後續問題" else "向本機 AI 提出後續問題", color = Muted) },
+                colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent
+                ),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { onSubmit() })
+            )
+            FilledIconButton(
+                onClick = onSubmit,
+                enabled = enabled && value.isNotBlank(),
+                colors = IconButtonDefaults.filledIconButtonColors(containerColor = Leaf)
+            ) {
+                Icon(Icons.Default.ArrowUpward, contentDescription = "送出後續問題", tint = Color.White)
             }
         }
     }

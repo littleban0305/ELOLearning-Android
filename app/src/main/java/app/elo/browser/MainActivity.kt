@@ -114,6 +114,7 @@ private fun ELOBrowser() {
     var aiServerUrl by remember { mutableStateOf(preferences.getString("ai_server_url", "").orEmpty()) }
     var geminiApiKey by remember { mutableStateOf(GeminiKeyStore.read(context)) }
     var aiMessages by remember { mutableStateOf(emptyList<ChatMessage>()) }
+    var aiFollowUpDraft by remember { mutableStateOf("") }
     var aiBusy by remember { mutableStateOf(false) }
     var localAiUnavailable by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<ArticleResult>>(emptyList()) }
@@ -123,6 +124,7 @@ private fun ELOBrowser() {
     var searching by remember { mutableStateOf(false) }
     var article by remember { mutableStateOf<ArticleResult?>(null) }
     var selectedSkin by remember { mutableStateOf<ArticleResult?>(null) }
+    var selectedSkinGroup by remember { mutableStateOf<Pair<String, List<ArticleResult>>?>(null) }
     var browserUrl by remember { mutableStateOf<String?>(null) }
     var serverUrl by remember { mutableStateOf(preferences.getString("server_url", null)) }
     var serverOpen by remember { mutableStateOf(false) }
@@ -258,31 +260,9 @@ private fun ELOBrowser() {
             return
         }
         if (category == SearchCategory.AI) {
-            if (aiBusy) return
-            if (wifiWithInternet && geminiApiKey.isBlank()) {
-                error = "請先在首次設定或設定頁填入 Gemini API key。"
-                settingsOpen = true
-                return
-            }
-            if (!wifiWithInternet && aiServerUrl.isBlank()) {
-                localAiUnavailable = true
-                error = "找不到本機 Qwen 服務。請設定本機服務或下載模型。"
-                return
-            }
-            val conversation = aiMessages + ChatMessage("user", text)
-            aiMessages = conversation
-            query = ""
+            category = SearchCategory.ALL
+            submittedQuery = text
             error = null
-            aiBusy = true
-            coroutineScope.launch {
-                runCatching { requestAiReply(conversation) }
-                    .onSuccess { reply -> aiMessages = aiMessages + ChatMessage("assistant", reply) }
-                    .onFailure { failure ->
-                        localAiUnavailable = !wifiWithInternet
-                        error = failure.message ?: if (wifiWithInternet) "無法連線到 Gemini。" else "無法連線到本機 Qwen。"
-                    }
-                aiBusy = false
-            }
             return
         }
         if (looksLikeUrl(text)) {
@@ -296,9 +276,39 @@ private fun ELOBrowser() {
         }
     }
 
-    BackHandler(article != null || selectedSkin != null) {
+    fun sendAiFollowUp() {
+        val text = aiFollowUpDraft.trim()
+        if (text.isEmpty() || aiBusy) return
+        if (wifiWithInternet && geminiApiKey.isBlank()) {
+            error = "請先設定 Gemini API key。"
+            settingsOpen = true
+            return
+        }
+        if (!wifiWithInternet && aiServerUrl.isBlank()) {
+            localAiUnavailable = true
+            error = "找不到本機 Qwen 服務。請設定本機服務或下載模型。"
+            return
+        }
+        val conversation = aiMessages + ChatMessage("user", text)
+        aiMessages = conversation
+        aiFollowUpDraft = ""
+        error = null
+        aiBusy = true
+        coroutineScope.launch {
+            runCatching { requestAiReply(conversation) }
+                .onSuccess { reply -> aiMessages = aiMessages + ChatMessage("assistant", reply) }
+                .onFailure { failure ->
+                    localAiUnavailable = !wifiWithInternet
+                    error = failure.message ?: if (wifiWithInternet) "無法連線到 Gemini。" else "無法連線到本機 Qwen。"
+                }
+            aiBusy = false
+        }
+    }
+
+    BackHandler(article != null || selectedSkin != null || selectedSkinGroup != null) {
         article = null
         selectedSkin = null
+        selectedSkinGroup = null
     }
 
     MaterialTheme {
@@ -360,6 +370,16 @@ private fun ELOBrowser() {
                 WebBrowserScreen(initialUrl = browserUrl!!, autoLoad = true, onBack = { browserUrl = null })
             } else if (selectedSkin != null) {
                 SkinDetailsScreen(skin = selectedSkin!!, onBack = { selectedSkin = null })
+            } else if (selectedSkinGroup != null) {
+                SkinWearSelectionScreen(
+                    weaponName = selectedSkinGroup!!.first,
+                    variants = selectedSkinGroup!!.second,
+                    onBack = { selectedSkinGroup = null },
+                    onSelectWear = {
+                        selectedSkin = it
+                        selectedSkinGroup = null
+                    }
+                )
             } else if (article != null) {
                 RemoteArticleScreen(
                     article = article!!,
@@ -382,6 +402,7 @@ private fun ELOBrowser() {
                     aiSummaryError = aiSummaryError,
                     aiSummaryLoading = aiSummaryLoading,
                     aiMessages = aiMessages,
+                    aiFollowUpDraft = aiFollowUpDraft,
                     aiBusy = aiBusy,
                     results = results,
                     searching = searching,
@@ -395,12 +416,17 @@ private fun ELOBrowser() {
                         error = null
                     },
                     onOpenSettings = { settingsOpen = true },
+                    onAiFollowUpChange = { aiFollowUpDraft = it },
+                    onSendAiFollowUp = { sendAiFollowUp() },
                     onDownloadLocalModel = {
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(QWEN_MODEL_URL)))
                     },
                     onFollowUp = {
                         category = SearchCategory.AI
                         query = submittedQuery
+                        if (aiMessages.isEmpty() && !aiSummary.isNullOrBlank()) {
+                            aiMessages = listOf(ChatMessage("assistant", aiSummary!!))
+                        }
                         error = null
                     },
                     onSubmit = { submit() },
@@ -408,7 +434,8 @@ private fun ELOBrowser() {
                     onOpenArticle = {
                         if (it.isCatalogItem) selectedSkin = it else article = it
                         keyboard?.hide()
-                    }
+                    },
+                    onOpenSkinGroup = { weapon, variants -> selectedSkinGroup = weapon to variants }
                 )
             }
         }
@@ -659,6 +686,34 @@ private fun SkinDetailsScreen(skin: ArticleResult, onBack: () -> Unit) {
             if (description.isNotBlank()) {
                 Spacer(Modifier.height(12.dp))
                 Text(description, color = Muted, fontSize = 15.sp, lineHeight = 22.sp)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SkinWearSelectionScreen(
+    weaponName: String,
+    variants: List<ArticleResult>,
+    onBack: () -> Unit,
+    onSelectWear: (ArticleResult) -> Unit
+) {
+    Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
+        Row(
+            modifier = Modifier.fillMaxWidth().background(Paper).padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Leaf)
+            }
+            Text(weaponName, color = Ink, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+        }
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            items(variants, key = { it.path }) { variant ->
+                ResultRow(result = variant, onClick = { onSelectWear(variant) })
             }
         }
     }
