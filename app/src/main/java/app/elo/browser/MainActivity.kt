@@ -300,6 +300,7 @@ private fun ELOBrowser() {
                 .onFailure { failure ->
                     localAiUnavailable = !wifiWithInternet
                     error = failure.message ?: if (wifiWithInternet) "無法連線到 Gemini。" else "無法連線到本機 Qwen。"
+                    aiFollowUpDraft = text
                 }
             aiBusy = false
         }
