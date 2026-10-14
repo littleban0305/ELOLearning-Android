@@ -374,7 +374,8 @@ private fun SearchResults(
                 localAiUnavailable = localAiUnavailable,
                 onFollowUp = onFollowUp,
                 onCategoryChange = onCategoryChange,
-                onOpenArticle = onOpenArticle
+                onOpenArticle = onOpenArticle,
+                onOpenSkinGroup = onOpenSkinGroup
             )
         } else if (category == SearchCategory.AI) {
             Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
