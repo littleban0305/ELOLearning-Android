@@ -482,50 +482,56 @@ private fun CommandInput(
     onSubmit: () -> Unit,
     onOpenServer: () -> Unit
 ) {
+    var menuOpen by remember { mutableStateOf(false) }
+    Surface(
         shape = RoundedCornerShape(30.dp),
         color = Color.White,
         shadowElevation = 4.dp,
         modifier = Modifier.fillMaxWidth()
-                if (aiServerUrl.isBlank()) {
-                    Box(
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("尚未設定 Qwen 連線", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
-                            Spacer(Modifier.height(8.dp))
-                            Button(onClick = onOpenSettings) { Text("設定 Qwen 連線") }
-                        }
-                    }
-                } else {
-                    if (error != null) {
-                        Text(error, color = ErrorRed, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
-                    }
-                    LazyColumn(
-                        modifier = Modifier.weight(1f).fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(aiMessages) { message ->
-                            Surface(
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(8.dp),
-                                color = if (message.role == "user") Color(0xFFE3EEE7) else Color.White
-                            ) {
-                                Column(modifier = Modifier.padding(12.dp)) {
-                                    Text(if (message.role == "user") "你" else "Qwen", color = Leaf, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                    Spacer(Modifier.height(4.dp))
-                                    Text(message.content, color = Ink, fontSize = 14.sp, lineHeight = 20.sp)
-                                }
-                            }
-                        }
-                        if (aiBusy) {
-                            item {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp, color = Leaf)
-                                    Spacer(Modifier.width(10.dp))
-                                    Text("Qwen 正在思考…", color = Muted, fontSize = 13.sp)
-                                }
-                            }
-                        }
-                    }
+    ) {
+        Row(
+            modifier = Modifier.padding(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box {
+                IconButton(onClick = { menuOpen = true }) {
+                    Icon(Icons.Default.Add, contentDescription = "更多功能", tint = Leaf)
+                }
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("設定圖書館伺服器") },
+                        leadingIcon = { Icon(Icons.Default.Cloud, contentDescription = null) },
+                        onClick = { menuOpen = false; onOpenServer() }
+                    )
+                }
+            }
+            TextField(
+                value = query,
+                onValueChange = onQueryChange,
+                modifier = Modifier.weight(1f),
+                singleLine = true,
+                placeholder = {
+                    Text(if (category == SearchCategory.AI) "輸入訊息給 Qwen" else "輸入網址或搜尋圖書館", color = Muted)
+                },
                 colors = TextFieldDefaults.colors(
+                    focusedContainerColor = Color.Transparent,
+                    unfocusedContainerColor = Color.Transparent,
+                    focusedIndicatorColor = Color.Transparent,
+                    unfocusedIndicatorColor = Color.Transparent
+                ),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                keyboardActions = KeyboardActions(onSend = { onSubmit() })
+            )
+            FilledIconButton(
+                onClick = onSubmit,
+                enabled = sendEnabled,
+                colors = IconButtonDefaults.filledIconButtonColors(
+                    containerColor = Leaf,
+                    disabledContainerColor = Color(0xFFD3DBD6)
+                )
+            ) {
+                Icon(Icons.Default.ArrowUpward, contentDescription = "發送", tint = Color.White)
+            }
+        }
+    }
+}
