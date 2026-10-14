@@ -11,7 +11,7 @@ import java.net.URL
 import java.nio.charset.StandardCharsets
 
 internal object GeminiClient {
-    private const val MODEL = "gemini-2.5-flash"
+    private const val MODEL = "gemini-3.8-flash"
 
     suspend fun reply(apiKey: String, messages: List<ChatMessage>): String = withContext(Dispatchers.IO) {
         require(apiKey.isNotBlank()) { "請先設定 Gemini API key。" }
