@@ -72,6 +72,8 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -88,6 +90,8 @@ internal val Ink = Color(0xFF17352B)
 internal val Leaf = Color(0xFF176B4A)
 internal val Paper = Color(0xFFF4F7F1)
 internal val Muted = Color(0xFF68776F)
+private const val GEMINI_KEY_URL = "https://aistudio.google.com/app/apikey"
+private const val QWEN_MODEL_URL = "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF"
 
 private data class SearchOutcome(val results: List<ArticleResult>, val message: String? = null)
 
@@ -108,8 +112,10 @@ private fun ELOBrowser() {
     var submittedQuery by remember { mutableStateOf("") }
     var category by remember { mutableStateOf(SearchCategory.ALL) }
     var aiServerUrl by remember { mutableStateOf(preferences.getString("ai_server_url", "").orEmpty()) }
+    var geminiApiKey by remember { mutableStateOf(GeminiKeyStore.read(context)) }
     var aiMessages by remember { mutableStateOf(emptyList<ChatMessage>()) }
     var aiBusy by remember { mutableStateOf(false) }
+    var localAiUnavailable by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<ArticleResult>>(emptyList()) }
     var aiSummary by remember { mutableStateOf<String?>(null) }
     var aiSummaryError by remember { mutableStateOf<String?>(null) }
@@ -121,9 +127,25 @@ private fun ELOBrowser() {
     var serverUrl by remember { mutableStateOf(preferences.getString("server_url", null)) }
     var serverOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
-    var onboarded by remember { mutableStateOf(preferences.getBoolean("onboarded", false)) }
+    var setupComplete by remember { mutableStateOf(preferences.getBoolean("setup_complete", false)) }
     val keyboard = LocalSoftwareKeyboardController.current
     val coroutineScope = rememberCoroutineScope()
+    val wifiWithInternet = rememberValidatedWifi()
+
+    suspend fun requestAiReply(messages: List<ChatMessage>): String {
+        if (wifiWithInternet) {
+            check(geminiApiKey.isNotBlank()) { "請先在設定中填入 Gemini API key。" }
+            return GeminiClient.reply(geminiApiKey, messages)
+        }
+        if (aiServerUrl.isBlank()) {
+            localAiUnavailable = true
+            throw IllegalStateException("目前不是可用 Wi-Fi，且尚未設定本機 Qwen 服務。")
+        }
+        return runCatching { QwenClient.reply(aiServerUrl, messages) }
+            .onSuccess { localAiUnavailable = false }
+            .onFailure { localAiUnavailable = true }
+            .getOrThrow()
+    }
 
     LaunchedEffect(submittedQuery, serverUrl, category, article, selectedSkin, serverOpen, settingsOpen) {
         val activeServerUrl = serverUrl
@@ -177,7 +199,7 @@ private fun ELOBrowser() {
         searching = false
     }
 
-    LaunchedEffect(submittedQuery, category, aiServerUrl, results, searching, settingsOpen, serverOpen) {
+    LaunchedEffect(submittedQuery, category, aiServerUrl, geminiApiKey, wifiWithInternet, results, searching, settingsOpen, serverOpen) {
         val term = submittedQuery.trim()
         if (category != SearchCategory.ALL || term.isBlank() || looksLikeUrl(term) || settingsOpen || serverOpen) {
             aiSummary = null
@@ -185,9 +207,16 @@ private fun ELOBrowser() {
             aiSummaryLoading = false
             return@LaunchedEffect
         }
-        if (aiServerUrl.isBlank()) {
-            aiSummary = "設定 Qwen API 後，即可在這裡產生搜尋摘要。"
-            aiSummaryError = null
+        if (wifiWithInternet && geminiApiKey.isBlank()) {
+            aiSummary = null
+            aiSummaryError = "請先在設定中填入 Gemini API key。"
+            aiSummaryLoading = false
+            return@LaunchedEffect
+        }
+        if (!wifiWithInternet && aiServerUrl.isBlank()) {
+            aiSummary = null
+            aiSummaryError = "目前無法連線本機 AI；請設定 Qwen 服務或下載模型。"
+            localAiUnavailable = true
             aiSummaryLoading = false
             return@LaunchedEffect
         }
@@ -206,15 +235,17 @@ private fun ELOBrowser() {
             "標題：${result.title}\n摘要：${result.snippet.take(500)}"
         }
         runCatching {
-            QwenClient.reply(
-                aiServerUrl,
+            requestAiReply(
                 listOf(
                     ChatMessage("system", "請使用繁體中文，依據提供的搜尋結果寫出簡潔摘要；不要加入來源中沒有的事實。"),
                     ChatMessage("user", "搜尋關鍵字：$term\n\n搜尋結果：\n$sourceText")
                 )
             )
         }.onSuccess { aiSummary = it }
-            .onFailure { aiSummaryError = it.message ?: "AI 摘要產生失敗。" }
+            .onFailure {
+                localAiUnavailable = !wifiWithInternet
+                aiSummaryError = it.message ?: "AI 摘要產生失敗。"
+            }
         aiSummaryLoading = false
     }
 
@@ -228,8 +259,14 @@ private fun ELOBrowser() {
         }
         if (category == SearchCategory.AI) {
             if (aiBusy) return
-            if (aiServerUrl.isBlank()) {
-                error = "請先在 AI 分頁設定舊手機的 Qwen API 網址。"
+            if (wifiWithInternet && geminiApiKey.isBlank()) {
+                error = "請先在首次設定或設定頁填入 Gemini API key。"
+                settingsOpen = true
+                return
+            }
+            if (!wifiWithInternet && aiServerUrl.isBlank()) {
+                localAiUnavailable = true
+                error = "找不到本機 Qwen 服務。請設定本機服務或下載模型。"
                 return
             }
             val conversation = aiMessages + ChatMessage("user", text)
@@ -238,9 +275,12 @@ private fun ELOBrowser() {
             error = null
             aiBusy = true
             coroutineScope.launch {
-                runCatching { QwenClient.reply(aiServerUrl, conversation) }
+                runCatching { requestAiReply(conversation) }
                     .onSuccess { reply -> aiMessages = aiMessages + ChatMessage("assistant", reply) }
-                    .onFailure { failure -> error = failure.message ?: "無法連線到 Qwen。" }
+                    .onFailure { failure ->
+                        localAiUnavailable = !wifiWithInternet
+                        error = failure.message ?: if (wifiWithInternet) "無法連線到 Gemini。" else "無法連線到本機 Qwen。"
+                    }
                 aiBusy = false
             }
             return
@@ -263,23 +303,45 @@ private fun ELOBrowser() {
 
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize(), color = Paper) {
-            if (!onboarded) {
-                OnboardingScreen(onStart = {
-                    preferences.edit().putBoolean("onboarded", true).apply()
-                    onboarded = true
-                })
+            if (!setupComplete) {
+                OnboardingScreen(
+                    libraryUrl = serverUrl.orEmpty(),
+                    qwenUrl = aiServerUrl,
+                    geminiApiKey = geminiApiKey,
+                    onOpenGeminiKey = {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(GEMINI_KEY_URL)))
+                    },
+                    onSave = { library, qwen, key ->
+                        preferences.edit()
+                            .putString("server_url", library.trim().trimEnd('/'))
+                            .putString("ai_server_url", qwen.trim().trimEnd('/'))
+                            .putBoolean("setup_complete", true)
+                            .apply()
+                        GeminiKeyStore.write(context, key.trim())
+                        serverUrl = library.trim().trimEnd('/')
+                        aiServerUrl = qwen.trim().trimEnd('/')
+                        geminiApiKey = key.trim()
+                        setupComplete = true
+                    }
+                )
             } else if (settingsOpen) {
                 AppSettingsScreen(
                     libraryUrl = serverUrl.orEmpty(),
                     qwenUrl = aiServerUrl,
+                    geminiApiKey = geminiApiKey,
+                    onOpenGeminiKey = {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(GEMINI_KEY_URL)))
+                    },
                     onBack = { settingsOpen = false },
-                    onSave = { library, qwen ->
+                    onSave = { library, qwen, key ->
                         preferences.edit()
                             .putString("server_url", library.takeIf(String::isNotBlank))
                             .putString("ai_server_url", qwen.takeIf(String::isNotBlank))
                             .apply()
+                        GeminiKeyStore.write(context, key)
                         serverUrl = library.takeIf(String::isNotBlank)
                         aiServerUrl = qwen
+                        geminiApiKey = key
                         settingsOpen = false
                     }
                 )
@@ -299,11 +361,20 @@ private fun ELOBrowser() {
             } else if (selectedSkin != null) {
                 SkinDetailsScreen(skin = selectedSkin!!, onBack = { selectedSkin = null })
             } else if (article != null) {
-                RemoteArticleScreen(article = article!!, onBack = { article = null })
+                RemoteArticleScreen(
+                    article = article!!,
+                    onBack = { article = null },
+                    onTitleChanged = { title ->
+                        if (title.isNotBlank()) article = article?.copy(title = title)
+                    }
+                )
             } else {
                 HomeScreen(
                     serverUrl = serverUrl,
                     aiServerUrl = aiServerUrl,
+                    geminiConfigured = geminiApiKey.isNotBlank(),
+                    usingGemini = wifiWithInternet,
+                    localAiUnavailable = localAiUnavailable,
                     query = query,
                     submittedQuery = submittedQuery,
                     category = category,
@@ -324,6 +395,9 @@ private fun ELOBrowser() {
                         error = null
                     },
                     onOpenSettings = { settingsOpen = true },
+                    onDownloadLocalModel = {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(QWEN_MODEL_URL)))
+                    },
                     onFollowUp = {
                         category = SearchCategory.AI
                         query = submittedQuery
@@ -446,11 +520,14 @@ private fun WebBrowserScreen(
 private fun AppSettingsScreen(
     libraryUrl: String,
     qwenUrl: String,
+    geminiApiKey: String,
+    onOpenGeminiKey: () -> Unit,
     onBack: () -> Unit,
-    onSave: (String, String) -> Unit
+    onSave: (String, String, String) -> Unit
 ) {
     var libraryDraft by remember(libraryUrl) { mutableStateOf(libraryUrl) }
     var qwenDraft by remember(qwenUrl) { mutableStateOf(qwenUrl) }
+    var apiKeyDraft by remember(geminiApiKey) { mutableStateOf(geminiApiKey) }
     var validationError by remember { mutableStateOf<String?>(null) }
 
     Column(
@@ -463,6 +540,16 @@ private fun AppSettingsScreen(
             }
             Text("設定", color = Ink, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
         }
+        OutlinedTextField(
+            value = apiKeyDraft,
+            onValueChange = { apiKeyDraft = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Gemini API key") },
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
+        )
+        TextButton(onClick = onOpenGeminiKey) { Text("前往 Google AI Studio 取得 API key") }
         OutlinedTextField(
             value = libraryDraft,
             onValueChange = { libraryDraft = it },
@@ -490,7 +577,7 @@ private fun AppSettingsScreen(
                     validationError = "網址需以 http:// 或 https:// 開頭，並包含主機 IP 或網域。"
                 } else {
                     validationError = null
-                    onSave(libraryDraft.trim().trimEnd('/'), qwenDraft.trim().trimEnd('/'))
+                    onSave(libraryDraft.trim().trimEnd('/'), qwenDraft.trim().trimEnd('/'), apiKeyDraft.trim())
                 }
             },
             modifier = Modifier.fillMaxWidth()
@@ -527,6 +614,9 @@ internal fun ResultRow(result: ArticleResult, onClick: () -> Unit) {
         Column(modifier = Modifier.weight(1f)) {
             Text(result.title, color = Leaf, fontSize = 16.sp, fontWeight = FontWeight.SemiBold,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (result.wearName != null) {
+                Text("磨損度：${result.wearName}", color = Muted, fontSize = 12.sp)
+            }
             if (result.snippet.isNotBlank()) {
                 Spacer(Modifier.height(4.dp))
                 Text(
@@ -564,6 +654,7 @@ private fun SkinDetailsScreen(skin: ArticleResult, onBack: () -> Unit) {
             }
             Spacer(Modifier.height(16.dp))
             Text(skin.title, color = Ink, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            skin.wearName?.let { Text("磨損度：$it", color = Leaf, fontSize = 14.sp) }
             val description = Html.fromHtml(skin.snippet, Html.FROM_HTML_MODE_COMPACT).toString().trim()
             if (description.isNotBlank()) {
                 Spacer(Modifier.height(12.dp))
@@ -574,7 +665,7 @@ private fun SkinDetailsScreen(skin: ArticleResult, onBack: () -> Unit) {
 }
 
 @Composable
-private fun RemoteArticleScreen(article: ArticleResult, onBack: () -> Unit) {
+private fun RemoteArticleScreen(article: ArticleResult, onBack: () -> Unit, onTitleChanged: (String) -> Unit) {
     Column(modifier = Modifier.fillMaxSize().background(Color.White)) {
         Row(
             modifier = Modifier
@@ -598,7 +689,11 @@ private fun RemoteArticleScreen(article: ArticleResult, onBack: () -> Unit) {
                     layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                     settings.javaScriptEnabled = true
                     settings.domStorageEnabled = true
-                    webChromeClient = WebChromeClient()
+                    webChromeClient = object : WebChromeClient() {
+                        override fun onReceivedTitle(view: WebView?, title: String?) {
+                            title?.takeIf(String::isNotBlank)?.let(onTitleChanged)
+                        }
+                    }
                     webViewClient = WebViewClient()
                     loadUrl(article.path)
                 }

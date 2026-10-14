@@ -96,9 +96,15 @@ internal object LibraryServer {
     }
 
     private fun articleTitle(title: String, link: String, baseUrl: String): String {
-        if (!title.equals("Wikipedia", ignoreCase = true)) return title
-        val articlePath = Uri.parse(URL(URL(baseUrl), link).toString()).lastPathSegment.orEmpty()
-        val pathTitle = Uri.decode(articlePath).replace('_', ' ').trim()
+        if (!title.contains("Wikipedia", ignoreCase = true) && title.isNotBlank()) return title
+        val pathSegments = Uri.parse(URL(URL(baseUrl), link).toString()).pathSegments
+        val articleMarker = pathSegments.indexOfFirst { it.equals("A", ignoreCase = true) }
+        val articleSegments = if (articleMarker >= 0) {
+            pathSegments.drop(articleMarker + 1)
+        } else {
+            pathSegments.takeLast(1)
+        }
+        val pathTitle = Uri.decode(articleSegments.joinToString("/")).replace('_', ' ').trim()
         return pathTitle.ifBlank { title }
     }
 

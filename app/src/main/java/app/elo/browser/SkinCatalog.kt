@@ -68,6 +68,7 @@ internal object SkinCatalog {
                 val item = json.getJSONObject(index)
                 val rarity = item.optJSONObject("rarity")?.optString("name").orEmpty()
                 val wear = item.optJSONObject("wear")?.optString("name").orEmpty()
+                val weapon = item.optJSONObject("weapon")?.optString("name")?.takeUnless(String::isBlank)
                 val metadata = listOf(rarity, wear).filter(String::isNotBlank).joinToString(" · ")
                 val description = item.optString("description").takeUnless { it == "null" }.orEmpty()
                 ArticleResult(
@@ -75,7 +76,9 @@ internal object SkinCatalog {
                     path = item.optString("id", index.toString()),
                     snippet = listOf(description, metadata).filter(String::isNotBlank).joinToString("\n"),
                     imageUrl = item.optString("image").takeUnless { it.isBlank() || it == "null" },
-                    isCatalogItem = true
+                    isCatalogItem = true,
+                    weaponName = weapon,
+                    wearName = wear.takeUnless(String::isBlank)
                 )
             }
         } finally {

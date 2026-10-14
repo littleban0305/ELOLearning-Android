@@ -1,5 +1,6 @@
 package app.elo.browser
 
+import android.net.Uri
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -21,6 +22,8 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -63,6 +66,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -80,34 +85,96 @@ internal fun normalizeUrl(text: String): String =
     else "https://$text"
 
 @Composable
-internal fun OnboardingScreen(onStart: () -> Unit) {
+internal fun OnboardingScreen(
+    libraryUrl: String,
+    qwenUrl: String,
+    geminiApiKey: String,
+    onOpenGeminiKey: () -> Unit,
+    onSave: (String, String, String) -> Unit
+) {
+    var libraryDraft by remember(libraryUrl) { mutableStateOf(libraryUrl) }
+    var qwenDraft by remember(qwenUrl) { mutableStateOf(qwenUrl) }
+    var apiKeyDraft by remember(geminiApiKey) { mutableStateOf(geminiApiKey) }
+    var validationError by remember { mutableStateOf<String?>(null) }
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(Paper)
             .systemBarsPadding()
-            .padding(28.dp),
-        verticalArrangement = Arrangement.Center
+            .imePadding()
+            .verticalScroll(rememberScrollState())
+            .padding(24.dp),
+        verticalArrangement = Arrangement.Center,
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Text("ELOBrowser", color = Ink, fontSize = 40.sp, fontWeight = FontWeight.Bold)
+        Text("ELOBrowser", color = Ink, fontSize = 34.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
-        Text("離線百科與網頁瀏覽，一個輸入框就能開始。", color = Muted, fontSize = 15.sp)
-        Spacer(Modifier.height(32.dp))
-        PermissionRow("網路連線", "瀏覽網頁時使用，系統已自動允許，不需要手動授權。")
-        Spacer(Modifier.height(16.dp))
-        PermissionRow("檔案存取", "載入 ZIM 檔案時，由系統檔案選擇器授權，只會讀取你選的檔案。")
-        Spacer(Modifier.height(36.dp))
+        Text("開始前設定圖書館與 AI", color = Muted, fontSize = 15.sp)
+        Spacer(Modifier.height(24.dp))
+        OutlinedTextField(
+            value = apiKeyDraft,
+            onValueChange = { apiKeyDraft = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Gemini API key") },
+            visualTransformation = PasswordVisualTransformation(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password)
+        )
+        TextButton(onClick = onOpenGeminiKey) { Text("前往 Google AI Studio 取得 API key") }
+        OutlinedTextField(
+            value = libraryDraft,
+            onValueChange = { libraryDraft = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Kiwix／維基百科伺服器網址") },
+            placeholder = { Text("http://192.168.1.25:8080") }
+        )
+        OutlinedTextField(
+            value = qwenDraft,
+            onValueChange = { qwenDraft = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("本機 Qwen API 網址（選填）") },
+            placeholder = { Text("http://192.168.1.25:8082") }
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            "只有已連線的 Wi-Fi 會使用 Gemini；查詢內容會傳給 Google。行動數據或離線時只使用本機 Qwen。",
+            color = Muted,
+            fontSize = 13.sp,
+            lineHeight = 19.sp
+        )
+        if (validationError != null) {
+            Spacer(Modifier.height(8.dp))
+            Text(validationError!!, color = ErrorRed, fontSize = 13.sp)
+        }
+        Spacer(Modifier.height(20.dp))
         Button(
-            onClick = onStart,
+            onClick = {
+                when {
+                    apiKeyDraft.isBlank() -> validationError = "請先填入 Gemini API key。"
+                    !isHttpUrl(libraryDraft) -> validationError = "請填入有效的 Kiwix 伺服器網址。"
+                    qwenDraft.isNotBlank() && !isHttpUrl(qwenDraft) -> validationError = "本機 Qwen 網址格式無效。"
+                    else -> {
+                        validationError = null
+                        onSave(libraryDraft.trim().trimEnd('/'), qwenDraft.trim().trimEnd('/'), apiKeyDraft.trim())
+                    }
+                }
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(52.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Leaf),
-            shape = RoundedCornerShape(26.dp)
+            shape = RoundedCornerShape(8.dp)
         ) {
-            Text("開始使用", fontSize = 16.sp)
+            Text("儲存並開始", fontSize = 16.sp)
         }
     }
+}
+
+private fun isHttpUrl(value: String): Boolean {
+    val uri = Uri.parse(value.trim())
+    return uri.scheme in setOf("http", "https") && !uri.host.isNullOrBlank()
 }
 
 @Composable
@@ -126,6 +193,9 @@ private fun PermissionRow(title: String, description: String) {
 internal fun HomeScreen(
     serverUrl: String?,
     aiServerUrl: String,
+    geminiConfigured: Boolean,
+    usingGemini: Boolean,
+    localAiUnavailable: Boolean,
     query: String,
     submittedQuery: String,
     category: SearchCategory,
@@ -140,6 +210,7 @@ internal fun HomeScreen(
     onQueryChange: (String) -> Unit,
     onCategoryChange: (SearchCategory) -> Unit,
     onOpenSettings: () -> Unit,
+    onDownloadLocalModel: () -> Unit,
     onFollowUp: () -> Unit,
     onSubmit: () -> Unit,
     onOpenServer: () -> Unit,
@@ -167,15 +238,20 @@ internal fun HomeScreen(
                     CommandInput(
                         query = query,
                         category = category,
+                        usingGemini = usingGemini,
                         sendEnabled = query.isNotBlank() && !(category == SearchCategory.AI && aiBusy),
                         onQueryChange = onQueryChange,
                         onSubmit = onSubmit,
-                        onOpenServer = onOpenServer
+                        onOpenServer = onOpenServer,
+                        onOpenSettings = onOpenSettings
                     )
                     Spacer(Modifier.height(8.dp))
                     SearchResults(
                         serverConfigured = !serverUrl.isNullOrBlank(),
                         aiServerUrl = aiServerUrl,
+                        geminiConfigured = geminiConfigured,
+                        usingGemini = usingGemini,
+                        localAiUnavailable = localAiUnavailable,
                         query = submittedQuery,
                         category = category,
                         aiSummary = aiSummary,
@@ -188,6 +264,7 @@ internal fun HomeScreen(
                         error = error,
                         onCategoryChange = onCategoryChange,
                         onOpenSettings = onOpenSettings,
+                        onDownloadLocalModel = onDownloadLocalModel,
                         onFollowUp = onFollowUp,
                         onOpenArticle = onOpenArticle
                     )
@@ -203,10 +280,12 @@ internal fun HomeScreen(
                         CommandInput(
                             query = query,
                             category = category,
+                            usingGemini = usingGemini,
                             sendEnabled = query.isNotBlank() && !(category == SearchCategory.AI && aiBusy),
                             onQueryChange = onQueryChange,
                             onSubmit = onSubmit,
-                            onOpenServer = onOpenServer
+                            onOpenServer = onOpenServer,
+                            onOpenSettings = onOpenSettings
                         )
                     }
                 }
@@ -231,6 +310,9 @@ private fun BrandTitle(modifier: Modifier = Modifier) {
 private fun SearchResults(
     serverConfigured: Boolean,
     aiServerUrl: String,
+    geminiConfigured: Boolean,
+    usingGemini: Boolean,
+    localAiUnavailable: Boolean,
     query: String,
     category: SearchCategory,
     aiSummary: String?,
@@ -243,6 +325,7 @@ private fun SearchResults(
     error: String?,
     onCategoryChange: (SearchCategory) -> Unit,
     onOpenSettings: () -> Unit,
+    onDownloadLocalModel: () -> Unit,
     onFollowUp: () -> Unit,
     onOpenArticle: (ArticleResult) -> Unit
 ) {
@@ -271,29 +354,45 @@ private fun SearchResults(
                 summaryError = aiSummaryError,
                 searchError = error,
                 summaryLoading = aiSummaryLoading,
-                onOpenSettings = onOpenSettings,
+                onDownloadLocalModel = onDownloadLocalModel,
+                usingGemini = usingGemini,
+                localAiUnavailable = localAiUnavailable,
                 onFollowUp = onFollowUp,
                 onCategoryChange = onCategoryChange,
                 onOpenArticle = onOpenArticle
             )
         } else if (category == SearchCategory.AI) {
             Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
-                if (aiServerUrl.isBlank()) {
+                if (usingGemini && !geminiConfigured) {
                     Box(
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("尚未設定 Qwen 連線", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                            Text("尚未設定 Gemini API key", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
                             Spacer(Modifier.height(8.dp))
-                            Button(onClick = onOpenSettings) { Text("設定 Qwen 連線") }
+                            Button(onClick = onOpenSettings) { Text("設定 Gemini") }
                             if (error != null) {
                                 Spacer(Modifier.height(8.dp))
                                 Text(error, color = ErrorRed, fontSize = 13.sp, textAlign = TextAlign.Center)
                             }
                         }
                     }
+                } else if (!usingGemini && (aiServerUrl.isBlank() || localAiUnavailable)) {
+                    Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("找不到本機 Qwen 服務", color = Ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(8.dp))
+                            Text("啟動舊手機的 llama-server，或下載 GGUF 模型。", color = Muted, fontSize = 13.sp, textAlign = TextAlign.Center)
+                            Spacer(Modifier.height(8.dp))
+                            TextButton(onClick = onDownloadLocalModel) {
+                                Text("下載本機 Qwen 模型")
+                            }
+                            TextButton(onClick = onOpenSettings) { Text("設定本機 Qwen 網址") }
+                        }
+                    }
                 } else {
+                    Text(if (usingGemini) "Gemini · Wi-Fi" else "本機 Qwen", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(vertical = 6.dp))
                     if (error != null) {
                         Text(error, color = ErrorRed, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
                     }
@@ -308,7 +407,12 @@ private fun SearchResults(
                                 color = if (message.role == "user") Color(0xFFE3EEE7) else Color.White
                             ) {
                                 Column(modifier = Modifier.padding(12.dp)) {
-                                    Text(if (message.role == "user") "你" else "Qwen", color = Leaf, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        if (message.role == "user") "你" else if (usingGemini) "Gemini" else "本機 Qwen",
+                                        color = Leaf,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
                                     Spacer(Modifier.height(4.dp))
                                     Text(message.content, color = Ink, fontSize = 14.sp, lineHeight = 20.sp)
                                 }
@@ -356,8 +460,19 @@ private fun SearchResults(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(pageResults, key = { "${it.imageUrl.orEmpty()}:${it.path}" }) { result ->
-                        ResultRow(result = result, onClick = { onOpenArticle(result) })
+                    if (category == SearchCategory.CS) {
+                        pageResults.groupBy { it.weaponName ?: "其他武器" }.forEach { (weapon, skins) ->
+                            item(key = "weapon:$weapon") {
+                                Text(weapon, color = Ink, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                            items(skins, key = { it.path }) { result ->
+                                ResultRow(result = result, onClick = { onOpenArticle(result) })
+                            }
+                        }
+                    } else {
+                        items(pageResults, key = { it.path }) { result ->
+                            ResultRow(result = result, onClick = { onOpenArticle(result) })
+                        }
                     }
                 }
                 if (categoryResults.isNotEmpty()) {
@@ -376,7 +491,9 @@ private fun AllSearchResults(
     summaryError: String?,
     searchError: String?,
     summaryLoading: Boolean,
-    onOpenSettings: () -> Unit,
+    onDownloadLocalModel: () -> Unit,
+    usingGemini: Boolean,
+    localAiUnavailable: Boolean,
     onFollowUp: () -> Unit,
     onCategoryChange: (SearchCategory) -> Unit,
     onOpenArticle: (ArticleResult) -> Unit
@@ -398,22 +515,11 @@ private fun AllSearchResults(
                 summaryError != null -> Text(summaryError, color = ErrorRed, fontSize = 13.sp)
                 searchError != null -> Text(searchError, color = ErrorRed, fontSize = 13.sp)
                 !summary.isNullOrBlank() -> Text(summary, color = Ink, fontSize = 14.sp, lineHeight = 21.sp)
-                query.isBlank() -> Text("搜尋後由 Qwen 整理結果摘要。", color = Muted, fontSize = 13.sp)
+                query.isBlank() -> Text("搜尋後由目前可用的 AI 整理結果摘要。", color = Muted, fontSize = 13.sp)
             }
-        }
-        item {
-            Surface(
-                modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenSettings),
-                shape = RoundedCornerShape(8.dp),
-                color = Color.White
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(Icons.Default.Settings, contentDescription = null, tint = Leaf)
-                    Spacer(Modifier.width(10.dp))
-                    Text("設定", color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            if (!usingGemini && localAiUnavailable) {
+                TextButton(onClick = onDownloadLocalModel) {
+                    Text("下載本機 Qwen 模型")
                 }
             }
         }
@@ -440,8 +546,13 @@ private fun AllSearchResults(
         if (skinResults.isEmpty() && query.isNotBlank()) {
             item { Text("沒有 CS 圖鑑結果", color = Muted, fontSize = 13.sp) }
         }
-        items(skinResults, key = { it.path }) { result ->
-            ResultRow(result = result, onClick = { onOpenArticle(result) })
+        skinResults.groupBy { it.weaponName ?: "其他武器" }.forEach { (weapon, skins) ->
+            item(key = "all-weapon:$weapon") {
+                Text(weapon, color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+            }
+            items(skins, key = { it.path }) { result ->
+                ResultRow(result = result, onClick = { onOpenArticle(result) })
+            }
         }
         if (skinResults.isNotEmpty()) {
             item { TextButton(onClick = { onCategoryChange(SearchCategory.CS) }) { Text("查看更多 CS 圖鑑結果") } }
@@ -477,10 +588,12 @@ private fun PageControls(page: Int, pageCount: Int, onPageChange: (Int) -> Unit)
 private fun CommandInput(
     query: String,
     category: SearchCategory,
+    usingGemini: Boolean,
     sendEnabled: Boolean,
     onQueryChange: (String) -> Unit,
     onSubmit: () -> Unit,
-    onOpenServer: () -> Unit
+    onOpenServer: () -> Unit,
+    onOpenSettings: () -> Unit
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Surface(
@@ -503,6 +616,11 @@ private fun CommandInput(
                         leadingIcon = { Icon(Icons.Default.Cloud, contentDescription = null) },
                         onClick = { menuOpen = false; onOpenServer() }
                     )
+                    DropdownMenuItem(
+                        text = { Text("設定") },
+                        leadingIcon = { Icon(Icons.Default.Settings, contentDescription = null) },
+                        onClick = { menuOpen = false; onOpenSettings() }
+                    )
                 }
             }
             TextField(
@@ -511,7 +629,14 @@ private fun CommandInput(
                 modifier = Modifier.weight(1f),
                 singleLine = true,
                 placeholder = {
-                    Text(if (category == SearchCategory.AI) "輸入訊息給 Qwen" else "輸入網址或搜尋圖書館", color = Muted)
+                    Text(
+                        when {
+                            category != SearchCategory.AI -> "輸入網址或搜尋圖書館"
+                            usingGemini -> "輸入訊息給 Gemini"
+                            else -> "輸入訊息給本機 Qwen"
+                        },
+                        color = Muted
+                    )
                 },
                 colors = TextFieldDefaults.colors(
                     focusedContainerColor = Color.Transparent,
