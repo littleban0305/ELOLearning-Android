@@ -61,6 +61,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -80,6 +81,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 internal val Ink = Color(0xFF17352B)
@@ -104,6 +106,10 @@ private fun ELOBrowser() {
     var error by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
     var category by remember { mutableStateOf(SearchCategory.ALL) }
+    var aiServerUrl by remember { mutableStateOf(preferences.getString("ai_server_url", "").orEmpty()) }
+    var aiServerUrlDraft by remember { mutableStateOf(preferences.getString("ai_server_url", "").orEmpty()) }
+    var aiMessages by remember { mutableStateOf(emptyList<ChatMessage>()) }
+    var aiBusy by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<ArticleResult>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
     var article by remember { mutableStateOf<ArticleResult?>(null) }
@@ -113,6 +119,7 @@ private fun ELOBrowser() {
     var serverOpen by remember { mutableStateOf(false) }
     var onboarded by remember { mutableStateOf(preferences.getBoolean("onboarded", false)) }
     val keyboard = LocalSoftwareKeyboardController.current
+    val coroutineScope = rememberCoroutineScope()
 
     LaunchedEffect(query, serverUrl, category, article, selectedSkin, serverOpen) {
         val activeServerUrl = serverUrl
@@ -167,6 +174,25 @@ private fun ELOBrowser() {
         val text = query.trim()
         if (text.isEmpty()) return
         keyboard?.hide()
+        if (category == SearchCategory.AI) {
+            if (aiBusy) return
+            if (aiServerUrl.isBlank()) {
+                error = "請先在 AI 分頁設定舊手機的 Qwen API 網址。"
+                return
+            }
+            val conversation = aiMessages + ChatMessage("user", text)
+            aiMessages = conversation
+            query = ""
+            error = null
+            aiBusy = true
+            coroutineScope.launch {
+                runCatching { QwenClient.reply(aiServerUrl, conversation) }
+                    .onSuccess { reply -> aiMessages = aiMessages + ChatMessage("assistant", reply) }
+                    .onFailure { failure -> error = failure.message ?: "無法連線到 Qwen。" }
+                aiBusy = false
+            }
+            return
+        }
         if (looksLikeUrl(text)) {
             browserUrl = normalizeUrl(text)
             query = ""
@@ -207,8 +233,11 @@ private fun ELOBrowser() {
             } else {
                 HomeScreen(
                     serverUrl = serverUrl,
+                    aiServerUrl = aiServerUrlDraft,
                     query = query,
                     category = category,
+                    aiMessages = aiMessages,
+                    aiBusy = aiBusy,
                     results = results,
                     searching = searching,
                     error = error,
@@ -219,6 +248,19 @@ private fun ELOBrowser() {
                     onCategoryChange = {
                         category = it
                         error = null
+                    },
+                    onAiServerUrlChange = { aiServerUrlDraft = it },
+                    onSaveAiServer = {
+                        val url = aiServerUrlDraft.trim().trimEnd('/')
+                        val uri = Uri.parse(url)
+                        if (uri.scheme !in setOf("http", "https") || uri.host.isNullOrBlank()) {
+                            error = "請輸入有效網址，例如 http://192.168.1.25:8082。"
+                        } else {
+                            preferences.edit().putString("ai_server_url", url).apply()
+                            aiServerUrl = url
+                            aiServerUrlDraft = url
+                            error = null
+                        }
                     },
                     onSubmit = { submit() },
                     onOpenServer = { serverOpen = true },

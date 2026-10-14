@@ -33,6 +33,7 @@ import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
@@ -114,13 +115,18 @@ private fun PermissionRow(title: String, description: String) {
 @Composable
 internal fun HomeScreen(
     serverUrl: String?,
+    aiServerUrl: String,
     query: String,
     category: SearchCategory,
+    aiMessages: List<ChatMessage>,
+    aiBusy: Boolean,
     results: List<ArticleResult>,
     searching: Boolean,
     error: String?,
     onQueryChange: (String) -> Unit,
     onCategoryChange: (SearchCategory) -> Unit,
+    onAiServerUrlChange: (String) -> Unit,
+    onSaveAiServer: () -> Unit,
     onSubmit: () -> Unit,
     onOpenServer: () -> Unit,
     onOpenArticle: (ArticleResult) -> Unit
@@ -155,18 +161,25 @@ internal fun HomeScreen(
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             SearchResults(
                 serverConfigured = !serverUrl.isNullOrBlank(),
+                aiServerUrl = aiServerUrl,
                 query = query,
                 category = category,
+                aiMessages = aiMessages,
+                aiBusy = aiBusy,
                 results = results,
                 searching = searching,
                 error = error,
                 onCategoryChange = onCategoryChange,
+                onAiServerUrlChange = onAiServerUrlChange,
+                onSaveAiServer = onSaveAiServer,
                 onOpenArticle = onOpenArticle
             )
         }
 
         CommandInput(
             query = query,
+            category = category,
+            sendEnabled = query.isNotBlank() && !(category == SearchCategory.AI && aiBusy),
             onQueryChange = onQueryChange,
             onSubmit = onSubmit,
             onOpenServer = onOpenServer
@@ -178,12 +191,17 @@ internal fun HomeScreen(
 @Composable
 private fun SearchResults(
     serverConfigured: Boolean,
+    aiServerUrl: String,
     query: String,
     category: SearchCategory,
+    aiMessages: List<ChatMessage>,
+    aiBusy: Boolean,
     results: List<ArticleResult>,
     searching: Boolean,
     error: String?,
     onCategoryChange: (SearchCategory) -> Unit,
+    onAiServerUrlChange: (String) -> Unit,
+    onSaveAiServer: () -> Unit,
     onOpenArticle: (ArticleResult) -> Unit
 ) {
     Column(modifier = Modifier.fillMaxSize()) {
@@ -200,17 +218,60 @@ private fun SearchResults(
             }
         }
         if (category == SearchCategory.AI) {
-            Box(
-                modifier = Modifier.weight(1f).fillMaxWidth().padding(24.dp),
-                contentAlignment = Alignment.Center
-            ) {
+            Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    OutlinedTextField(
+                        value = aiServerUrl,
+                        onValueChange = onAiServerUrlChange,
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        label = { Text("Qwen API 網址") },
+                        placeholder = { Text("http://192.168.1.25:8082") }
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Button(onClick = onSaveAiServer, enabled = aiServerUrl.isNotBlank()) {
+                        Text("儲存")
+                    }
+                }
                 Text(
-                    "AI 模式尚未連接 Qwen。\n先在舊手機啟動模型 API，再設定伺服器網址即可接入。",
+                    "填入舊手機的 llama-server 網址，例如 http://192.168.1.25:8082",
                     color = Muted,
-                    fontSize = 14.sp,
-                    lineHeight = 22.sp,
-                    textAlign = TextAlign.Center
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(top = 4.dp, bottom = 8.dp)
                 )
+                if (error != null) {
+                    Text(error, color = ErrorRed, fontSize = 13.sp, modifier = Modifier.padding(bottom = 8.dp))
+                }
+                LazyColumn(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(aiMessages) { message ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            color = if (message.role == "user") Color(0xFFE3EEE7) else Color.White
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(if (message.role == "user") "你" else "Qwen", color = Leaf, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                                Spacer(Modifier.height(4.dp))
+                                Text(message.content, color = Ink, fontSize = 14.sp, lineHeight = 20.sp)
+                            }
+                        }
+                    }
+                    if (aiBusy) {
+                        item {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp, color = Leaf)
+                                Spacer(Modifier.width(10.dp))
+                                Text("Qwen 正在思考…", color = Muted, fontSize = 13.sp)
+                            }
+                        }
+                    }
+                }
             }
         } else {
             Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -243,6 +304,8 @@ private fun SearchResults(
 @Composable
 private fun CommandInput(
     query: String,
+    category: SearchCategory,
+    sendEnabled: Boolean,
     onQueryChange: (String) -> Unit,
     onSubmit: () -> Unit,
     onOpenServer: () -> Unit
@@ -275,7 +338,9 @@ private fun CommandInput(
                 onValueChange = onQueryChange,
                 modifier = Modifier.weight(1f),
                 singleLine = true,
-                placeholder = { Text("輸入網址或搜尋圖書館", color = Muted) },
+                placeholder = {
+                    Text(if (category == SearchCategory.AI) "輸入訊息給 Qwen" else "輸入網址或搜尋圖書館", color = Muted)
+                },
                 colors = TextFieldDefaults.colors(
                     focusedContainerColor = Color.Transparent,
                     unfocusedContainerColor = Color.Transparent,
@@ -287,7 +352,7 @@ private fun CommandInput(
             )
             FilledIconButton(
                 onClick = onSubmit,
-                enabled = query.isNotBlank(),
+                enabled = sendEnabled,
                 colors = IconButtonDefaults.filledIconButtonColors(
                     containerColor = Leaf,
                     disabledContainerColor = Color(0xFFD3DBD6)
