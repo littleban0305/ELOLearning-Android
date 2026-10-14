@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -118,6 +119,9 @@ internal fun HomeScreen(
     aiServerUrl: String,
     query: String,
     category: SearchCategory,
+    aiSummary: String?,
+    aiSummaryError: String?,
+    aiSummaryLoading: Boolean,
     aiMessages: List<ChatMessage>,
     aiBusy: Boolean,
     results: List<ArticleResult>,
@@ -125,6 +129,8 @@ internal fun HomeScreen(
     error: String?,
     onQueryChange: (String) -> Unit,
     onCategoryChange: (SearchCategory) -> Unit,
+    onOpenSettings: () -> Unit,
+    onFollowUp: () -> Unit,
     onAiServerUrlChange: (String) -> Unit,
     onSaveAiServer: () -> Unit,
     onSubmit: () -> Unit,
@@ -164,12 +170,17 @@ internal fun HomeScreen(
                 aiServerUrl = aiServerUrl,
                 query = query,
                 category = category,
+                aiSummary = aiSummary,
+                aiSummaryError = aiSummaryError,
+                aiSummaryLoading = aiSummaryLoading,
                 aiMessages = aiMessages,
                 aiBusy = aiBusy,
                 results = results,
                 searching = searching,
                 error = error,
                 onCategoryChange = onCategoryChange,
+                onOpenSettings = onOpenSettings,
+                onFollowUp = onFollowUp,
                 onAiServerUrlChange = onAiServerUrlChange,
                 onSaveAiServer = onSaveAiServer,
                 onOpenArticle = onOpenArticle
@@ -194,12 +205,17 @@ private fun SearchResults(
     aiServerUrl: String,
     query: String,
     category: SearchCategory,
+    aiSummary: String?,
+    aiSummaryError: String?,
+    aiSummaryLoading: Boolean,
     aiMessages: List<ChatMessage>,
     aiBusy: Boolean,
     results: List<ArticleResult>,
     searching: Boolean,
     error: String?,
     onCategoryChange: (SearchCategory) -> Unit,
+    onOpenSettings: () -> Unit,
+    onFollowUp: () -> Unit,
     onAiServerUrlChange: (String) -> Unit,
     onSaveAiServer: () -> Unit,
     onOpenArticle: (ArticleResult) -> Unit
@@ -217,7 +233,20 @@ private fun SearchResults(
                 )
             }
         }
-        if (category == SearchCategory.AI) {
+        if (category == SearchCategory.ALL) {
+            AllSearchResults(
+                query = query,
+                results = results,
+                summary = aiSummary,
+                summaryError = aiSummaryError,
+                searchError = error,
+                summaryLoading = aiSummaryLoading,
+                onOpenSettings = onOpenSettings,
+                onFollowUp = onFollowUp,
+                onCategoryChange = onCategoryChange,
+                onOpenArticle = onOpenArticle
+            )
+        } else if (category == SearchCategory.AI) {
             Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -274,6 +303,14 @@ private fun SearchResults(
                 }
             }
         } else {
+            var page by remember(query, category) { mutableStateOf(0) }
+            val categoryResults = when (category) {
+                SearchCategory.CS -> results.filter { it.isCatalogItem }
+                SearchCategory.WIKIPEDIA -> results.filter { !it.isCatalogItem }
+                else -> emptyList()
+            }
+            val pageCount = ((categoryResults.size + 19) / 20).coerceAtLeast(1)
+            val pageResults = categoryResults.drop(page * 20).take(20)
             Column(modifier = Modifier.weight(1f).fillMaxWidth()) {
                 when {
                     error != null -> Text(error, color = ErrorRed, fontSize = 13.sp)
@@ -288,16 +325,127 @@ private fun SearchResults(
                         Text("找不到結果", color = Muted, fontSize = 13.sp)
                     query.isBlank() -> Text("輸入關鍵字開始搜尋", color = Muted, fontSize = 13.sp)
                 }
+                if (categoryResults.isNotEmpty()) {
+                    PageControls(page = page, pageCount = pageCount, onPageChange = { page = it })
+                }
                 LazyColumn(
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    items(results, key = { "${it.imageUrl.orEmpty()}:${it.path}" }) { result ->
+                    items(pageResults, key = { "${it.imageUrl.orEmpty()}:${it.path}" }) { result ->
                         ResultRow(result = result, onClick = { onOpenArticle(result) })
                     }
                 }
+                if (categoryResults.isNotEmpty()) {
+                    PageControls(page = page, pageCount = pageCount, onPageChange = { page = it })
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun AllSearchResults(
+    query: String,
+    results: List<ArticleResult>,
+    summary: String?,
+    summaryError: String?,
+    searchError: String?,
+    summaryLoading: Boolean,
+    onOpenSettings: () -> Unit,
+    onFollowUp: () -> Unit,
+    onCategoryChange: (SearchCategory) -> Unit,
+    onOpenArticle: (ArticleResult) -> Unit
+) {
+    val wikiResults = results.filter { !it.isCatalogItem }.take(20)
+    val skinResults = results.filter { it.isCatalogItem }.take(20)
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        item {
+            Text("AI 摘要", color = Ink, fontSize = 18.sp, fontWeight = FontWeight.SemiBold)
+            when {
+                summaryLoading -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp, color = Leaf)
+                    Spacer(Modifier.width(8.dp))
+                    Text("正在整理搜尋結果…", color = Muted, fontSize = 13.sp)
+                }
+                summaryError != null -> Text(summaryError, color = ErrorRed, fontSize = 13.sp)
+                searchError != null -> Text(searchError, color = ErrorRed, fontSize = 13.sp)
+                !summary.isNullOrBlank() -> Text(summary, color = Ink, fontSize = 14.sp, lineHeight = 21.sp)
+                query.isBlank() -> Text("搜尋後由 Qwen 整理結果摘要。", color = Muted, fontSize = 13.sp)
+            }
+        }
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenSettings),
+                shape = RoundedCornerShape(8.dp),
+                color = Color.White
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(Icons.Default.Settings, contentDescription = null, tint = Leaf)
+                    Spacer(Modifier.width(10.dp))
+                    Text("設定", color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                }
+            }
+        }
+        item {
+            TextButton(onClick = onFollowUp, enabled = query.isNotBlank()) {
+                Text("提出後續查詢")
+            }
+        }
+        item {
+            SectionHeading("維基百科", onClick = { onCategoryChange(SearchCategory.WIKIPEDIA) })
+        }
+        if (wikiResults.isEmpty() && query.isNotBlank()) {
+            item { Text("沒有維基百科結果", color = Muted, fontSize = 13.sp) }
+        }
+        items(wikiResults, key = { it.path }) { result ->
+            ResultRow(result = result, onClick = { onOpenArticle(result) })
+        }
+        if (wikiResults.isNotEmpty()) {
+            item { TextButton(onClick = { onCategoryChange(SearchCategory.WIKIPEDIA) }) { Text("查看更多維基百科結果") } }
+        }
+        item {
+            SectionHeading("CS 圖鑑", onClick = { onCategoryChange(SearchCategory.CS) })
+        }
+        if (skinResults.isEmpty() && query.isNotBlank()) {
+            item { Text("沒有 CS 圖鑑結果", color = Muted, fontSize = 13.sp) }
+        }
+        items(skinResults, key = { it.path }) { result ->
+            ResultRow(result = result, onClick = { onOpenArticle(result) })
+        }
+        if (skinResults.isNotEmpty()) {
+            item { TextButton(onClick = { onCategoryChange(SearchCategory.CS) }) { Text("查看更多 CS 圖鑑結果") } }
+        }
+    }
+}
+
+@Composable
+private fun SectionHeading(title: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(title, modifier = Modifier.weight(1f), color = Ink, fontSize = 17.sp, fontWeight = FontWeight.SemiBold)
+        TextButton(onClick = onClick) { Text("查看更多") }
+    }
+}
+
+@Composable
+private fun PageControls(page: Int, pageCount: Int, onPageChange: (Int) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween
+    ) {
+        TextButton(onClick = { onPageChange(page - 1) }, enabled = page > 0) { Text("上一頁") }
+        Text("${page + 1} / $pageCount", color = Muted, fontSize = 13.sp)
+        TextButton(onClick = { onPageChange(page + 1) }, enabled = page + 1 < pageCount) { Text("下一頁") }
     }
 }
 

@@ -1,5 +1,6 @@
 package app.elo.browser
 
+import android.net.Uri
 import android.util.Xml
 import org.xmlpull.v1.XmlPullParser
 import java.io.BufferedReader
@@ -30,7 +31,12 @@ internal object LibraryServer {
             if (status !in 200..299) {
                 throw IllegalStateException("伺服器回應 $status：${body.take(240)}")
             }
-            return parseResults(body, baseUrl)
+            val query = term.lowercase(java.util.Locale.ROOT)
+            val terms = query.split(Regex("\\s+")).filter(String::isNotBlank)
+            return parseResults(body, baseUrl).mapIndexed { index, result ->
+                Triple(relevance(result, query, terms), index, result)
+            }.sortedWith(compareByDescending<Triple<Int, Int, ArticleResult>> { it.first }.thenBy { it.second })
+                .map { it.third }
         } finally {
             connection.disconnect()
         }
@@ -71,7 +77,7 @@ internal object LibraryServer {
                 }
                 XmlPullParser.END_TAG -> {
                     if (parser.name.lowercase() in setOf("item", "entry", "result") && inResult) {
-                        val resultTitle = title.orEmpty()
+                            val resultTitle = articleTitle(title.orEmpty(), link.orEmpty(), baseUrl)
                         val resultLink = link.orEmpty()
                         if (resultTitle.isNotBlank() && resultLink.isNotBlank()) {
                             results += ArticleResult(
@@ -87,6 +93,32 @@ internal object LibraryServer {
             event = parser.next()
         }
         return results
+    }
+
+    private fun articleTitle(title: String, link: String, baseUrl: String): String {
+        if (!title.equals("Wikipedia", ignoreCase = true)) return title
+        val articlePath = Uri.parse(URL(URL(baseUrl), link).toString()).lastPathSegment.orEmpty()
+        val pathTitle = Uri.decode(articlePath).replace('_', ' ').trim()
+        return pathTitle.ifBlank { title }
+    }
+
+    private fun relevance(result: ArticleResult, query: String, terms: List<String>): Int {
+        val title = result.title.lowercase(java.util.Locale.ROOT)
+        val snippet = result.snippet.lowercase(java.util.Locale.ROOT)
+        var score = when {
+            title == query -> 10_000
+            title.startsWith(query) -> 6_000
+            title.contains(query) -> 4_000
+            else -> 0
+        }
+        score += terms.sumOf { term ->
+            when {
+                title.contains(term) -> 500
+                snippet.contains(term) -> 50
+                else -> 0
+            }
+        }
+        return score
     }
 
     private fun readElementText(parser: XmlPullParser): String {

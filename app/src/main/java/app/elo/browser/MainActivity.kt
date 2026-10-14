@@ -111,29 +111,36 @@ private fun ELOBrowser() {
     var aiMessages by remember { mutableStateOf(emptyList<ChatMessage>()) }
     var aiBusy by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<ArticleResult>>(emptyList()) }
+    var aiSummary by remember { mutableStateOf<String?>(null) }
+    var aiSummaryError by remember { mutableStateOf<String?>(null) }
+    var aiSummaryLoading by remember { mutableStateOf(false) }
     var searching by remember { mutableStateOf(false) }
     var article by remember { mutableStateOf<ArticleResult?>(null) }
     var selectedSkin by remember { mutableStateOf<ArticleResult?>(null) }
     var browserUrl by remember { mutableStateOf<String?>(null) }
     var serverUrl by remember { mutableStateOf(preferences.getString("server_url", null)) }
     var serverOpen by remember { mutableStateOf(false) }
+    var settingsOpen by remember { mutableStateOf(false) }
     var onboarded by remember { mutableStateOf(preferences.getBoolean("onboarded", false)) }
     val keyboard = LocalSoftwareKeyboardController.current
     val coroutineScope = rememberCoroutineScope()
 
-    LaunchedEffect(query, serverUrl, category, article, selectedSkin, serverOpen) {
+    LaunchedEffect(query, serverUrl, category, article, selectedSkin, serverOpen, settingsOpen) {
         val activeServerUrl = serverUrl
         val term = query.trim()
         if (term.isBlank() || category == SearchCategory.AI || article != null || selectedSkin != null ||
-            serverOpen || looksLikeUrl(term)
+            serverOpen || settingsOpen || looksLikeUrl(term)
         ) {
             results = emptyList()
             searching = false
             error = null
             return@LaunchedEffect
         }
-        delay(280)
+        results = emptyList()
+        aiSummary = null
+        aiSummaryError = null
         searching = true
+        delay(280)
         error = null
         val outcome = withContext(Dispatchers.IO) {
             when (category) {
@@ -170,10 +177,55 @@ private fun ELOBrowser() {
         searching = false
     }
 
+    LaunchedEffect(query, category, aiServerUrl, results, searching, settingsOpen, serverOpen) {
+        val term = query.trim()
+        if (category != SearchCategory.ALL || term.isBlank() || looksLikeUrl(term) || settingsOpen || serverOpen) {
+            aiSummary = null
+            aiSummaryError = null
+            aiSummaryLoading = false
+            return@LaunchedEffect
+        }
+        if (aiServerUrl.isBlank()) {
+            aiSummary = "設定 Qwen API 後，即可在這裡產生搜尋摘要。"
+            aiSummaryError = null
+            aiSummaryLoading = false
+            return@LaunchedEffect
+        }
+        if (searching || results.isEmpty()) {
+            aiSummary = null
+            aiSummaryLoading = false
+            return@LaunchedEffect
+        }
+
+        delay(500)
+        aiSummaryLoading = true
+        aiSummaryError = null
+        val sourceResults = results.filter { it.imageUrl == null }.take(4) +
+            results.filter { it.imageUrl != null }.take(4)
+        val sourceText = sourceResults.joinToString("\n") { result ->
+            "標題：${result.title}\n摘要：${result.snippet.take(500)}"
+        }
+        runCatching {
+            QwenClient.reply(
+                aiServerUrl,
+                listOf(
+                    ChatMessage("system", "請使用繁體中文，依據提供的搜尋結果寫出簡潔摘要；不要加入來源中沒有的事實。"),
+                    ChatMessage("user", "搜尋關鍵字：$term\n\n搜尋結果：\n$sourceText")
+                )
+            )
+        }.onSuccess { aiSummary = it }
+            .onFailure { aiSummaryError = it.message ?: "AI 摘要產生失敗。" }
+        aiSummaryLoading = false
+    }
+
     fun submit() {
         val text = query.trim()
         if (text.isEmpty()) return
         keyboard?.hide()
+        if (category != SearchCategory.AI && text.equals("設定", ignoreCase = true)) {
+            settingsOpen = true
+            return
+        }
         if (category == SearchCategory.AI) {
             if (aiBusy) return
             if (aiServerUrl.isBlank()) {
@@ -213,6 +265,22 @@ private fun ELOBrowser() {
                     preferences.edit().putBoolean("onboarded", true).apply()
                     onboarded = true
                 })
+            } else if (settingsOpen) {
+                AppSettingsScreen(
+                    libraryUrl = serverUrl.orEmpty(),
+                    qwenUrl = aiServerUrl,
+                    onBack = { settingsOpen = false },
+                    onSave = { library, qwen ->
+                        preferences.edit()
+                            .putString("server_url", library.takeIf(String::isNotBlank))
+                            .putString("ai_server_url", qwen.takeIf(String::isNotBlank))
+                            .apply()
+                        serverUrl = library.takeIf(String::isNotBlank)
+                        aiServerUrl = qwen
+                        aiServerUrlDraft = qwen
+                        settingsOpen = false
+                    }
+                )
             } else if (serverOpen) {
                 WebBrowserScreen(
                     initialUrl = serverUrl.orEmpty(),
@@ -236,6 +304,9 @@ private fun ELOBrowser() {
                     aiServerUrl = aiServerUrlDraft,
                     query = query,
                     category = category,
+                    aiSummary = aiSummary,
+                    aiSummaryError = aiSummaryError,
+                    aiSummaryLoading = aiSummaryLoading,
                     aiMessages = aiMessages,
                     aiBusy = aiBusy,
                     results = results,
@@ -247,6 +318,12 @@ private fun ELOBrowser() {
                     },
                     onCategoryChange = {
                         category = it
+                        error = null
+                    },
+                    onOpenSettings = { settingsOpen = true },
+                    onFollowUp = {
+                        category = SearchCategory.AI
+                        query = "請深入說明「${query.trim()}」"
                         error = null
                     },
                     onAiServerUrlChange = { aiServerUrlDraft = it },
@@ -265,7 +342,7 @@ private fun ELOBrowser() {
                     onSubmit = { submit() },
                     onOpenServer = { serverOpen = true },
                     onOpenArticle = {
-                        if (it.imageUrl != null) selectedSkin = it else article = it
+                        if (it.isCatalogItem) selectedSkin = it else article = it
                         keyboard?.hide()
                     }
                 )
@@ -373,6 +450,69 @@ private fun WebBrowserScreen(
             )
         }
     }
+}
+
+@Composable
+private fun AppSettingsScreen(
+    libraryUrl: String,
+    qwenUrl: String,
+    onBack: () -> Unit,
+    onSave: (String, String) -> Unit
+) {
+    var libraryDraft by remember(libraryUrl) { mutableStateOf(libraryUrl) }
+    var qwenDraft by remember(qwenUrl) { mutableStateOf(qwenUrl) }
+    var validationError by remember { mutableStateOf<String?>(null) }
+
+    Column(
+        modifier = Modifier.fillMaxSize().background(Paper).padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = Leaf)
+            }
+            Text("設定", color = Ink, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
+        }
+        OutlinedTextField(
+            value = libraryDraft,
+            onValueChange = { libraryDraft = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Kiwix 圖書館網址") },
+            placeholder = { Text("http://192.168.1.25:8080") }
+        )
+        OutlinedTextField(
+            value = qwenDraft,
+            onValueChange = { qwenDraft = it },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Qwen API 網址") },
+            placeholder = { Text("http://192.168.1.25:8082") }
+        )
+        if (validationError != null) {
+            Text(validationError!!, color = Color(0xFF9B352D), fontSize = 13.sp)
+        }
+        Button(
+            onClick = {
+                val invalidLibrary = libraryDraft.isNotBlank() && !isValidHttpUrl(libraryDraft)
+                val invalidQwen = qwenDraft.isNotBlank() && !isValidHttpUrl(qwenDraft)
+                if (invalidLibrary || invalidQwen) {
+                    validationError = "網址需以 http:// 或 https:// 開頭，並包含主機 IP 或網域。"
+                } else {
+                    validationError = null
+                    onSave(libraryDraft.trim().trimEnd('/'), qwenDraft.trim().trimEnd('/'))
+                }
+            },
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text("儲存設定")
+        }
+    }
+}
+
+private fun isValidHttpUrl(value: String): Boolean {
+    val uri = Uri.parse(value.trim())
+    return uri.scheme in setOf("http", "https") && !uri.host.isNullOrBlank()
 }
 
 @Composable

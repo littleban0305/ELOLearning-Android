@@ -10,8 +10,8 @@ import java.util.Locale
 
 internal object SkinCatalog {
     private const val CATALOG_URL =
-        "https://raw.githubusercontent.com/littleban0305/CSGO-API/main/public/api/en/skins_not_grouped.json"
-    private const val MAX_RESULTS = 50
+        "https://raw.githubusercontent.com/littleban0305/CSGO-API/main/public/api/zh-TW/skins_not_grouped.json"
+    private const val MAX_RESULTS = 100
 
     @Volatile
     private var cachedSkins: List<ArticleResult>? = null
@@ -21,13 +21,35 @@ internal object SkinCatalog {
             cachedSkins ?: downloadCatalog().also { cachedSkins = it }
         }
         val normalizedTerm = term.trim().lowercase(Locale.ROOT)
+        val queryTerms = normalizedTerm.split(Regex("\\s+")).filter(String::isNotBlank)
         return catalog.asSequence()
-            .filter { skin ->
-                skin.title.lowercase(Locale.ROOT).contains(normalizedTerm) ||
-                    skin.snippet.lowercase(Locale.ROOT).contains(normalizedTerm)
+            .mapIndexed { index, skin ->
+                Triple(relevance(skin, normalizedTerm, queryTerms), index, skin)
             }
+            .filter { it.first > 0 }
+            .sortedWith(compareByDescending<Triple<Int, Int, ArticleResult>> { it.first }.thenBy { it.second })
             .take(MAX_RESULTS)
+            .map { it.third }
             .toList()
+    }
+
+    private fun relevance(skin: ArticleResult, query: String, terms: List<String>): Int {
+        val title = skin.title.lowercase(Locale.ROOT)
+        val description = skin.snippet.lowercase(Locale.ROOT)
+        var score = when {
+            title == query -> 10_000
+            title.startsWith(query) -> 6_000
+            title.contains(query) -> 4_000
+            else -> 0
+        }
+        score += terms.sumOf { term ->
+            when {
+                title.contains(term) -> 500
+                description.contains(term) -> 50
+                else -> 0
+            }
+        }
+        return score
     }
 
     private fun downloadCatalog(): List<ArticleResult> {
@@ -52,7 +74,8 @@ internal object SkinCatalog {
                     title = item.optString("name", "未命名武器外觀"),
                     path = item.optString("id", index.toString()),
                     snippet = listOf(description, metadata).filter(String::isNotBlank).joinToString("\n"),
-                    imageUrl = item.optString("image").takeUnless { it.isBlank() || it == "null" }
+                    imageUrl = item.optString("image").takeUnless { it.isBlank() || it == "null" },
+                    isCatalogItem = true
                 )
             }
         } finally {

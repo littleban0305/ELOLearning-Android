@@ -17,7 +17,8 @@ internal data class ArticleResult(
     val title: String,
     val path: String,
     val snippet: String = "",
-    val imageUrl: String? = null
+    val imageUrl: String? = null,
+    val isCatalogItem: Boolean = false
 )
 
 internal enum class SearchMode {
