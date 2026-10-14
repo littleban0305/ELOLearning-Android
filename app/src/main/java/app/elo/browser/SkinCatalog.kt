@@ -42,8 +42,8 @@ internal object SkinCatalog {
             title.contains(query) -> 4_000
             else -> 0
         }
-        score += terms.sumOf { term ->
-            when {
+        score += terms.fold(0) { total, term ->
+            total + when {
                 title.contains(term) -> 500
                 description.contains(term) -> 50
                 else -> 0

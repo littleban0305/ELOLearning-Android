@@ -77,7 +77,7 @@ internal object LibraryServer {
                 }
                 XmlPullParser.END_TAG -> {
                     if (parser.name.lowercase() in setOf("item", "entry", "result") && inResult) {
-                            val resultTitle = articleTitle(title.orEmpty(), link.orEmpty(), baseUrl)
+                        val resultTitle = articleTitle(title.orEmpty(), link.orEmpty(), baseUrl)
                         val resultLink = link.orEmpty()
                         if (resultTitle.isNotBlank() && resultLink.isNotBlank()) {
                             results += ArticleResult(
@@ -111,8 +111,8 @@ internal object LibraryServer {
             title.contains(query) -> 4_000
             else -> 0
         }
-        score += terms.sumOf { term ->
-            when {
+        score += terms.fold(0) { total, term ->
+            total + when {
                 title.contains(term) -> 500
                 snippet.contains(term) -> 50
                 else -> 0
