@@ -13,7 +13,7 @@ import java.nio.charset.StandardCharsets
 
 internal object GeminiClient {
     private const val MODEL = "gemini-3.8-flash"
-    private const val MAX_503_RETRIES = 1
+    private const val MAX_503_RETRIES = 2
     private const val MAX_CONTINUATIONS = 1
 
     private data class HttpResult(val status: Int, val body: String, val retryAfterSeconds: Long?)
@@ -80,7 +80,8 @@ internal object GeminiClient {
             }
 
             if (response.status == 503) {
-                error("Gemini 暫時繁忙（503），已重試 $retryCount 次。請稍後再試。")
+                val details = response.body.take(500).ifBlank { "伺服器沒有提供錯誤詳情。" }
+                error("Gemini 暫時繁忙（503），已重試 $retryCount 次：$details")
             }
             error("Gemini 回應 ${response.status}：${response.body.take(300)}")
         }
@@ -91,7 +92,7 @@ internal object GeminiClient {
             .openConnection() as HttpURLConnection
         connection.requestMethod = "POST"
         connection.connectTimeout = 12_000
-        connection.readTimeout = 30_000
+        connection.readTimeout = 60_000
         connection.doOutput = true
         connection.setRequestProperty("x-goog-api-key", apiKey)
         connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
