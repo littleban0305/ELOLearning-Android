@@ -19,7 +19,7 @@ internal object GeminiClient {
     private data class HttpResult(val status: Int, val body: String, val retryAfterSeconds: Long?)
     private data class ParsedReply(val text: String, val wasTruncated: Boolean)
 
-    suspend fun reply(apiKey: String, messages: List<ChatMessage>): String {
+    suspend fun reply(apiKey: String, messages: List<ChatMessage>, expectJson: Boolean = false): String {
         require(apiKey.isNotBlank()) { "請先設定 Gemini API key。" }
         val systemInstruction = messages.filter { it.role == "system" }
             .joinToString("\n") { it.content }
@@ -32,9 +32,13 @@ internal object GeminiClient {
                 )
             }
         }
+        val generationConfig = JSONObject()
+            .put("temperature", 0.4)
+            .put("maxOutputTokens", 1_024)
+        if (expectJson) generationConfig.put("responseMimeType", "application/json")
         val payload = JSONObject()
             .put("contents", contents)
-            .put("generationConfig", JSONObject().put("temperature", 0.7).put("maxOutputTokens", 1_024))
+            .put("generationConfig", generationConfig)
         if (systemInstruction.isNotBlank()) {
             payload.put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemInstruction))))
         }

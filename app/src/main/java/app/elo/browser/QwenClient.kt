@@ -16,13 +16,22 @@ internal object QwenClient {
     suspend fun reply(serverUrl: String, messages: List<ChatMessage>): String = withContext(Dispatchers.IO) {
         val baseUrl = serverUrl.trim().trimEnd('/')
         val endpoint = if (baseUrl.endsWith("/v1")) "$baseUrl/chat/completions" else "$baseUrl/v1/chat/completions"
+        val systemInstruction = messages.filter { it.role == "system" }
+            .joinToString("\n") { it.content }
+        val conversation = messages.filter { it.role != "system" }.takeLast(11)
+        val payloadMessages = JSONArray()
+        if (systemInstruction.isNotBlank()) {
+            payloadMessages.put(JSONObject().put("role", "system").put("content", systemInstruction))
+        }
+        conversation.forEach { message ->
+            payloadMessages.put(JSONObject().put("role", message.role).put("content", message.content))
+        }
+        if (expectJson) {
+            payload.put("response_format", JSONObject().put("type", "json_object"))
+        }
         val payload = JSONObject()
             .put("model", "local-model")
-            .put("messages", JSONArray().apply {
-                messages.takeLast(12).forEach { message ->
-                    put(JSONObject().put("role", message.role).put("content", message.content))
-                }
-            })
+            .put("messages", payloadMessages)
             .put("temperature", 0.7)
             .put("max_tokens", 1_024)
             .put("stream", false)

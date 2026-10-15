@@ -137,16 +137,16 @@ private fun ELOBrowser() {
     val coroutineScope = rememberCoroutineScope()
     val wifiWithInternet = rememberValidatedWifi()
 
-    suspend fun requestAiReply(messages: List<ChatMessage>): String {
+    suspend fun requestAiReply(messages: List<ChatMessage>, expectJson: Boolean = false): String {
         if (wifiWithInternet) {
             check(geminiApiKey.isNotBlank()) { "請先在設定中填入 Gemini API key。" }
-            return GeminiClient.reply(geminiApiKey, messages)
+            return GeminiClient.reply(geminiApiKey, messages, expectJson)
         }
         if (aiServerUrl.isBlank()) {
             localAiUnavailable = true
             throw IllegalStateException("目前不是可用 Wi-Fi，且尚未設定本機 Qwen 服務。")
         }
-        return runCatching { QwenClient.reply(aiServerUrl, messages) }
+        return runCatching { QwenClient.reply(aiServerUrl, messages, expectJson) }
             .onSuccess { localAiUnavailable = false }
             .onFailure { localAiUnavailable = true }
             .getOrThrow()
@@ -261,11 +261,12 @@ private fun ELOBrowser() {
             return
         }
         if (category == SearchCategory.AI) {
-            category = SearchCategory.ALL
             submittedQuery = text
-            submittedSearchCategory = SearchCategory.ALL
+            submittedSearchCategory = SearchCategory.AI
             searchRevision++
+            aiFollowUpDraft = text
             error = null
+            sendAiFollowUp()
             return
         }
         if (looksLikeUrl(text)) {
@@ -304,21 +305,6 @@ private fun ELOBrowser() {
             return
         }
 
-        val phoneProposal = PhoneActions.parse(text)
-        if (phoneProposal != null) {
-            aiMessages = aiMessages + ChatMessage("user", text) + ChatMessage("assistant", phoneProposal.reply)
-            pendingPhoneAction = phoneProposal.pendingAction
-            aiFollowUpDraft = ""
-            return
-        }
-
-        if (PhoneActions.isGreeting(text)) {
-            aiMessages = aiMessages + ChatMessage("user", text) +
-                ChatMessage("assistant", PhoneActions.smallTalkReply(text))
-            aiFollowUpDraft = ""
-            return
-        }
-
         if (wifiWithInternet && geminiApiKey.isBlank()) {
             error = "請先設定 Gemini API key。"
             settingsOpen = true
@@ -336,41 +322,22 @@ private fun ELOBrowser() {
         aiBusy = true
         coroutineScope.launch {
             runCatching {
-                val lookup = withContext(Dispatchers.IO) {
-                    val wiki = if (serverUrl.isNullOrBlank()) {
-                        Result.success(emptyList())
-                    } else {
-                        runCatching { LibraryServer.search(serverUrl!!, text) }
-                    }
-                    val skins = runCatching { SkinCatalog.search(text) }
-                    val found = wiki.getOrDefault(emptyList()) + skins.getOrDefault(emptyList())
-                    SearchOutcome(
-                        results = found,
-                        message = listOf(wiki.exceptionOrNull()?.message, skins.exceptionOrNull()?.message)
-                            .filterNotNull()
-                            .joinToString("\n")
-                            .ifBlank { null }
-                    )
-                }
-                results = lookup.results
-                if (lookup.results.isEmpty()) {
-                    "我在維基百科與 CS 圖鑑中沒有找到相關資料。你可以換個關鍵字試試。"
-                } else {
-                    val sourceText = lookup.results.take(12).joinToString("\n") { result ->
-                        "標題：${result.title}\n資料：${result.snippet.take(500)}"
-                    }
-                    requestAiReply(
-                        listOf(
-                            ChatMessage("system", "你是搜尋助理。只能根據提供的維基百科與 CS 圖鑑搜尋結果，用繁體中文自然回答；不可補充來源以外的知識。若資料不足，請明確說明。"),
-                            ChatMessage("user", "問題：$text\n\n搜尋結果：\n$sourceText")
-                        )
-                    )
-                }
+                requestAiReply(
+                    listOf(ChatMessage("system", PhoneActions.SYSTEM_INSTRUCTION)) + conversation.takeLast(12),
+                    expectJson = true
+                )
             }
-                .onSuccess { reply -> aiMessages = aiMessages + ChatMessage("assistant", reply) }
+                .onSuccess { rawReply ->
+                    val response = PhoneActions.parseAiResponse(rawReply)
+                    pendingPhoneAction = response.pendingAction
+                    aiMessages = aiMessages + ChatMessage("assistant", response.reply)
+                }
                 .onFailure { failure ->
                     localAiUnavailable = !wifiWithInternet
-                    error = failure.message ?: if (wifiWithInternet) "無法連線到 Gemini。" else "無法連線到本機 Qwen。"
+                    error = when {
+                        failure is java.net.SocketTimeoutException -> "AI 回應逾時，請確認網路或本機模型服務狀態後重試。"
+                        else -> failure.message ?: if (wifiWithInternet) "無法連線到 Gemini。" else "無法連線到本機 Qwen。"
+                    }
                     aiFollowUpDraft = text
                 }
             aiBusy = false

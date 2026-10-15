@@ -450,7 +450,7 @@ private fun SearchResults(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     CircularProgressIndicator(modifier = Modifier.width(18.dp).height(18.dp), strokeWidth = 2.dp, color = Leaf)
                                     Spacer(Modifier.width(10.dp))
-                                    Text("Qwen 正在思考…", color = Muted, fontSize = 13.sp)
+                                    Text("AI 正在思考…", color = Muted, fontSize = 13.sp)
                                 }
                             }
                         }

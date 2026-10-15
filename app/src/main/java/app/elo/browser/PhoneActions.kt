@@ -1,8 +1,11 @@
 package app.elo.browser
 
 import android.content.Intent
+import android.net.Uri
 import android.provider.AlarmClock
+import android.provider.MediaStore
 import android.provider.Settings
+import org.json.JSONObject
 
 internal data class PendingPhoneAction(
     val intent: Intent,
@@ -10,108 +13,142 @@ internal data class PendingPhoneAction(
     val completedMessage: String
 )
 
-internal data class PhoneActionProposal(
+internal data class AiActionResponse(
     val reply: String,
     val pendingAction: PendingPhoneAction? = null
 )
 
 internal object PhoneActions {
-    private val alarmTime = Regex("(今晚|晚上|下午|早上|上午)?\\s*(\\d{1,2})\\s*(?:[:：點时時]\\s*(\\d{1,2}|半)?\\s*(?:分)?)")
-    private val duration = Regex("(\\d+)\\s*(秒|分鐘|分|小時|小時鐘)")
+    const val SYSTEM_INSTRUCTION = """
+        你是 ELOBrowser 的繁體中文 AI 助理。每則回覆只能輸出一個 JSON 物件，不要使用 Markdown 或程式碼區塊。
+        格式：{"reply":"給使用者看的自然回覆","action":null}；若使用者要求手機操作，action 改為下列白名單之一。
+        action 格式：
+        {"type":"set_alarm","hour":0,"minute":0,"label":"鬧鐘名稱","days":[]}（hour 0-23；days 可省略，星期日到六為 1 到 7）
+        {"type":"set_timer","seconds":60,"label":"計時器名稱"}
+        {"type":"open_settings","page":"main|wifi|bluetooth|sound|display|apps|location"}
+        {"type":"dial","number":"電話號碼"}
+        {"type":"sms","number":"電話號碼","message":"簡訊內容"}
+        {"type":"email","address":"電子郵件","subject":"主旨","body":"內容"}
+        {"type":"maps","query":"地點或導航目的地"}
+        {"type":"camera"}
+        {"type":"open_url","url":"https://..."}
+        不要輸出其他 action/type。撥號只會開啟撥號器；簡訊與郵件只會開啟預填草稿，不會代替使用者送出。每個手機操作都會先向使用者確認。
+        使用者問你能做什麼時，說明你能回答問題、設定鬧鐘與計時器、開啟手機設定、準備撥號/簡訊/郵件、搜尋地圖、開相機及開啟網址。
+        對鬧鐘時間、地點、電話號碼或收件地址等必要資訊不足時，先在 reply 詢問並設 action 為 null。只說「七點」時預設早上 07:00，並在 reply 明確說明這個假設。
+        一般聊天、問候和知識問題也必須使用同一 JSON 格式，action 設為 null。不要假裝已執行尚未確認的操作。
+    """.trimIndent()
 
-    fun parse(text: String): PhoneActionProposal? {
-        val value = text.trim()
-        val normalized = value.lowercase()
-        if (listOf("鬧鐘", "alarm").any(normalized::contains)) {
-            if (listOf("明天", "後天", "明早").any(value::contains)) {
-                return PhoneActionProposal("我目前能設定今天起算的鬧鐘。請改成今晚或直接提供 24 小時制時間，例如 19:00。")
-            }
-            val match = alarmTime.find(value)
-                ?: return PhoneActionProposal("可以，請告訴我鬧鐘時間，例如「今晚 7:00 設鬧鐘」。")
-            val period = match.groupValues[1]
-            var hour = match.groupValues[2].toIntOrNull()
-                ?: return PhoneActionProposal("我沒辨識出時間，請用例如「今晚 7:00」的格式。")
-            val minuteText = match.groupValues[3]
-            val minute = if (minuteText == "半") 30 else minuteText.toIntOrNull() ?: 0
-            if (hour !in 0..23 || minute !in 0..59) {
-                return PhoneActionProposal("這個時間無效，請再提供一次鬧鐘時間。")
-            }
-            if (hour in 1..12 && period in setOf("今晚", "晚上", "下午")) hour = if (hour == 12) 12 else hour + 12
-            if (hour == 12 && period in setOf("早上", "上午")) hour = 0
-            val timeText = "%02d:%02d".format(hour, minute)
-            val intent = Intent(AlarmClock.ACTION_SET_ALARM)
-                .putExtra(AlarmClock.EXTRA_HOUR, hour)
-                .putExtra(AlarmClock.EXTRA_MINUTES, minute)
-                .putExtra(AlarmClock.EXTRA_MESSAGE, "ELOBrowser 設定的鬧鐘")
-                .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-            return PhoneActionProposal(
-                reply = "可以，是否確認設定 $timeText 的鬧鐘？請回覆「可以」或「取消」。",
-                pendingAction = PendingPhoneAction(intent, "設定 $timeText 鬧鐘", "已交由 Android 時鐘設定 $timeText 鬧鐘。")
+    fun parseAiResponse(raw: String): AiActionResponse {
+        val trimmed = raw.trim()
+        val start = trimmed.indexOf('{')
+        val end = trimmed.lastIndexOf('}')
+        if (start < 0 || end < start) return AiActionResponse(trimmed)
+
+        return runCatching {
+            val response = JSONObject(trimmed.substring(start, end + 1))
+            val reply = response.optString("reply").ifBlank { "我收到你的訊息了。" }
+            val action = response.optJSONObject("action") ?: return@runCatching AiActionResponse(reply)
+            val pending = createAction(action) ?: return@runCatching AiActionResponse(reply)
+            AiActionResponse(
+                "$reply\n\n要執行「${pending.confirmation}」嗎？請回覆「確認」或「取消」。",
+                pending
             )
-        }
+        }.getOrElse { AiActionResponse(trimmed) }
+    }
 
-        if (listOf("計時器", "倒數", "timer").any(normalized::contains)) {
-            val match = duration.find(value)
-                ?: return PhoneActionProposal("可以，請告訴我計時長度，例如「計時 10 分鐘」。")
-            val amount = match.groupValues[1].toIntOrNull() ?: 0
-            val unit = match.groupValues[2]
-            val seconds = when (unit) {
-                "秒" -> amount
-                "小時", "小時鐘" -> amount * 3_600
-                else -> amount * 60
+    private fun createAction(action: JSONObject): PendingPhoneAction? {
+        val label = action.optString("label").trim().ifBlank { "ELOBrowser" }
+        return when (action.optString("type")) {
+            "set_alarm" -> {
+                val hour = action.optInt("hour", -1)
+                val minute = action.optInt("minute", -1)
+                if (hour !in 0..23 || minute !in 0..59) return null
+                val intent = Intent(AlarmClock.ACTION_SET_ALARM)
+                    .putExtra(AlarmClock.EXTRA_HOUR, hour)
+                    .putExtra(AlarmClock.EXTRA_MINUTES, minute)
+                    .putExtra(AlarmClock.EXTRA_MESSAGE, label)
+                    .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+                val days = action.optJSONArray("days")
+                if (days != null && days.length() > 0) {
+                    val values = ArrayList<Int>()
+                    for (index in 0 until days.length()) {
+                        val day = days.optInt(index, -1)
+                        if (day !in 1..7) return null
+                        values.add(day)
+                    }
+                    intent.putExtra(AlarmClock.EXTRA_DAYS, values)
+                }
+                PendingPhoneAction(intent, "設定 %02d:%02d 鬧鐘".format(hour, minute), "已交由 Android 時鐘設定鬧鐘。")
             }
-            if (seconds !in 1..86_400) return PhoneActionProposal("計時長度需介於 1 秒與 24 小時。")
-            val intent = Intent(AlarmClock.ACTION_SET_TIMER)
-                .putExtra(AlarmClock.EXTRA_LENGTH, seconds)
-                .putExtra(AlarmClock.EXTRA_MESSAGE, "ELOBrowser 設定的計時器")
-                .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
-            return PhoneActionProposal(
-                reply = "可以，是否確認設定 $amount $unit 計時器？請回覆「可以」或「取消」。",
-                pendingAction = PendingPhoneAction(intent, "設定計時器", "已交由 Android 時鐘設定計時器。")
+            "set_timer" -> {
+                val seconds = action.optInt("seconds", -1)
+                if (seconds !in 1..86_400) return null
+                val intent = Intent(AlarmClock.ACTION_SET_TIMER)
+                    .putExtra(AlarmClock.EXTRA_LENGTH, seconds)
+                    .putExtra(AlarmClock.EXTRA_MESSAGE, label)
+                    .putExtra(AlarmClock.EXTRA_SKIP_UI, true)
+                PendingPhoneAction(intent, "設定 $seconds 秒計時器", "已交由 Android 時鐘設定計時器。")
+            }
+            "open_settings" -> {
+                val page = action.optString("page", "main")
+                val settingsAction = when (page) {
+                    "main" -> Settings.ACTION_SETTINGS
+                    "wifi" -> Settings.ACTION_WIFI_SETTINGS
+                    "bluetooth" -> Settings.ACTION_BLUETOOTH_SETTINGS
+                    "sound" -> Settings.ACTION_SOUND_SETTINGS
+                    "display" -> Settings.ACTION_DISPLAY_SETTINGS
+                    "apps" -> Settings.ACTION_APPLICATION_SETTINGS
+                    "location" -> Settings.ACTION_LOCATION_SOURCE_SETTINGS
+                    else -> return null
+                }
+                PendingPhoneAction(Intent(settingsAction), "開啟手機設定", "已開啟手機設定。")
+            }
+            "dial" -> {
+                val number = action.optString("number").trim()
+                if (!number.matches(Regex("[+0-9*#(),. -]{3,32}"))) return null
+                PendingPhoneAction(
+                    Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null)),
+                    "開啟 $number 的撥號器",
+                    "已開啟撥號器；請自行確認並撥出。"
+                )
+            }
+            "sms" -> {
+                val number = action.optString("number").trim()
+                val message = action.optString("message").trim()
+                if (!number.matches(Regex("[+0-9*#(),. -]{3,32}")) || message.isBlank()) return null
+                val intent = Intent(Intent.ACTION_SENDTO, Uri.fromParts("smsto", number, null))
+                    .putExtra("sms_body", message)
+                PendingPhoneAction(intent, "準備傳送給 $number 的簡訊", "已開啟預填簡訊；請自行確認後傳送。")
+            }
+            "email" -> {
+                val address = action.optString("address").trim()
+                if (!address.matches(Regex("[^\\s@]+@[^\\s@]+\\.[^\\s@]+"))) return null
+                val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:"))
+                    .putExtra(Intent.EXTRA_EMAIL, arrayOf(address))
+                    .putExtra(Intent.EXTRA_SUBJECT, action.optString("subject"))
+                    .putExtra(Intent.EXTRA_TEXT, action.optString("body"))
+                PendingPhoneAction(intent, "準備寄送給 $address 的郵件", "已開啟預填郵件；請自行確認後寄出。")
+            }
+            "maps" -> {
+                val query = action.optString("query").trim()
+                if (query.isBlank()) return null
+                PendingPhoneAction(
+                    Intent(Intent.ACTION_VIEW, Uri.parse("geo:0,0?q=${Uri.encode(query)}")),
+                    "在地圖搜尋「$query」",
+                    "已開啟地圖搜尋。"
+                )
+            }
+            "camera" -> PendingPhoneAction(
+                Intent(MediaStore.ACTION_IMAGE_CAPTURE),
+                "開啟相機",
+                "已開啟相機。"
             )
-        }
-
-        val settingsAction = when {
-            listOf("手機設定", "系統設定", "打開設定", "開啟設定").any(value::contains) ->
-                Settings.ACTION_SETTINGS to "手機系統設定"
-            listOf("wifi", "wi-fi", "無線網路", "無線網絡").any(normalized::contains) ->
-                Settings.ACTION_WIFI_SETTINGS to "Wi-Fi 設定"
-            listOf("藍牙", "bluetooth").any(normalized::contains) ->
-                Settings.ACTION_BLUETOOTH_SETTINGS to "藍牙設定"
-            listOf("音量設定", "音效設定", "聲音設定").any(value::contains) ->
-                Settings.ACTION_SOUND_SETTINGS to "音效設定"
+            "open_url" -> {
+                val uri = Uri.parse(action.optString("url").trim())
+                if (uri.scheme !in setOf("http", "https") || uri.host.isNullOrBlank()) return null
+                PendingPhoneAction(Intent(Intent.ACTION_VIEW, uri), "開啟 ${uri.host}", "已開啟網頁。")
+            }
             else -> null
-        }
-        if (settingsAction != null) {
-            val intent = Intent(settingsAction.first)
-            return PhoneActionProposal(
-                reply = "可以，是否開啟${settingsAction.second}？請回覆「可以」或「取消」。",
-                pendingAction = PendingPhoneAction(intent, "開啟${settingsAction.second}", "已開啟${settingsAction.second}。")
-            )
-        }
-        return null
-    }
-
-    fun isGreeting(text: String): Boolean {
-        val normalized = text.trim().lowercase().trimEnd('！', '!', '。', '.', '？', '?', '～', '~')
-        return normalized in setOf(
-            "你好", "您好", "嗨", "哈囉", "早安", "午安", "晚安", "hello", "hi", "hey",
-            "謝謝", "多謝", "感謝", "thanks", "thank you", "你是誰", "你是谁", "你在嗎", "你在吗"
-        ) || normalized.startsWith("你好嗎") || normalized.startsWith("你好吗")
-    }
-
-    fun smallTalkReply(text: String): String {
-        val normalized = text.trim().lowercase()
-        return when {
-            normalized.contains("謝謝") || normalized.contains("多謝") || normalized.contains("感謝") || normalized.contains("thanks") ->
-                "不客氣！還有什麼需要我幫忙的嗎？"
-            normalized.contains("你是誰") || normalized.contains("你是谁") ->
-                "我是 ELOBrowser 的 AI 助理，可以搜尋維基百科和 CS 圖鑑，也能在你確認後協助設定鬧鐘或計時器。"
-            normalized.contains("你在嗎") || normalized.contains("你在吗") ->
-                "我在！你可以問我維基百科或 CS 圖鑑的內容，也可以請我準備手機操作。"
-            normalized.contains("早安") -> "早安！今天想查什麼，或需要我幫你設定提醒嗎？"
-            normalized.contains("晚安") -> "晚安！需要我幫你設定明早的鬧鐘嗎？"
-            else -> "你好！想找維基百科或 CS 武器皮膚資料，或需要設定鬧鐘、計時器嗎？"
         }
     }
 
