@@ -13,7 +13,7 @@ import java.nio.charset.StandardCharsets
 
 internal object GeminiClient {
     private const val MODEL = "gemini-3.8-flash"
-    private const val MAX_503_RETRIES = 2
+    private const val MAX_503_RETRIES = 1
     private const val MAX_CONTINUATIONS = 1
 
     private data class HttpResult(val status: Int, val body: String, val retryAfterSeconds: Long?)
@@ -24,7 +24,7 @@ internal object GeminiClient {
         val systemInstruction = messages.filter { it.role == "system" }
             .joinToString("\n") { it.content }
         val contents = JSONArray().apply {
-            messages.filter { it.role != "system" }.takeLast(12).forEach { message ->
+            messages.filter { it.role != "system" }.takeLast(8).forEach { message ->
                 put(
                     JSONObject()
                         .put("role", if (message.role == "assistant") "model" else "user")
@@ -33,8 +33,8 @@ internal object GeminiClient {
             }
         }
         val generationConfig = JSONObject()
-            .put("temperature", 0.4)
-            .put("maxOutputTokens", 1_024)
+            .put("temperature", 0.2)
+            .put("maxOutputTokens", 512)
         if (expectJson) generationConfig.put("responseMimeType", "application/json")
         val payload = JSONObject()
             .put("contents", contents)
@@ -91,7 +91,7 @@ internal object GeminiClient {
             .openConnection() as HttpURLConnection
         connection.requestMethod = "POST"
         connection.connectTimeout = 12_000
-        connection.readTimeout = 120_000
+        connection.readTimeout = 30_000
         connection.doOutput = true
         connection.setRequestProperty("x-goog-api-key", apiKey)
         connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
