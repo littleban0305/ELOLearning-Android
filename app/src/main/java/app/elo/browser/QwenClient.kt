@@ -27,9 +27,10 @@ internal object QwenClient {
             .put("max_tokens", 1_024)
             .put("stream", false)
 
-            val answer = StringBuilder()
-            var continuationCount = 0
-            while (true) {
+        val answer = StringBuilder()
+        var continuationCount = 0
+        var done = false
+        while (!done) {
                 val connection = URL(endpoint).openConnection() as HttpURLConnection
                 connection.requestMethod = "POST"
                 connection.connectTimeout = 8_000
@@ -55,16 +56,18 @@ internal object QwenClient {
                     connection.disconnect()
             }
 
-                val choice = JSONObject(body).getJSONArray("choices").getJSONObject(0)
-                val content = choice.getJSONObject("message").getString("content").trim()
-                answer.append(content)
-                if (choice.optString("finish_reason") != "length" || continuationCount >= 1) {
-                    return@withContext answer.toString().ifBlank { "模型沒有回傳文字，請再試一次。" }
-                }
+            val choice = JSONObject(body).getJSONArray("choices").getJSONObject(0)
+            val content = choice.getJSONObject("message").getString("content").trim()
+            answer.append(content)
+            if (choice.optString("finish_reason") != "length" || continuationCount >= 1) {
+                done = true
+            } else {
                 payload.getJSONArray("messages")
                     .put(JSONObject().put("role", "assistant").put("content", content))
                     .put(JSONObject().put("role", "user").put("content", "請從剛才中斷的位置繼續，不要重複已回答的內容。"))
                 continuationCount++
+            }
         }
+        answer.toString().ifBlank { "模型沒有回傳文字，請再試一次。" }
     }
 }

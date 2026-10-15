@@ -375,8 +375,8 @@ private fun ELOBrowser() {
                 SkinDetailsScreen(skin = selectedSkin!!, onBack = { selectedSkin = null })
             } else if (selectedSkinGroup != null) {
                 SkinWearSelectionScreen(
-                    weaponName = selectedSkinGroup!!.first,
-                    variants = selectedSkinGroup!!.second,
+                    weaponName = selectedSkinGroup!!.weaponName,
+                    variants = selectedSkinGroup!!.variants,
                     onBack = { selectedSkinGroup = null },
                     onSelectWear = {
                         selectedSkin = it
@@ -439,7 +439,7 @@ private fun ELOBrowser() {
                         if (it.isCatalogItem) selectedSkin = it else article = it
                         keyboard?.hide()
                     },
-                    onOpenSkinGroup = { weapon, variants -> selectedSkinGroup = weapon to variants }
+                    onOpenSkinGroup = { group -> selectedSkinGroup = group }
                 )
             }
         }

@@ -39,7 +39,7 @@ internal object GeminiClient {
             payload.put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemInstruction))))
         }
 
-        val contents = payload.getJSONArray("contents")
+        val payloadContents = payload.getJSONArray("contents")
         val completeAnswer = StringBuilder()
         var continuationCount = 0
         var retryCount = 0
@@ -51,12 +51,12 @@ internal object GeminiClient {
                 if (!reply.wasTruncated || continuationCount >= MAX_CONTINUATIONS) {
                     return completeAnswer.toString().ifBlank { "Gemini 沒有回傳文字，請再試一次。" }
                 }
-                contents.put(
+                payloadContents.put(
                     JSONObject()
                         .put("role", "model")
                         .put("parts", JSONArray().put(JSONObject().put("text", reply.text)))
                 )
-                contents.put(
+                payloadContents.put(
                     JSONObject()
                         .put("role", "user")
                         .put("parts", JSONArray().put(JSONObject().put("text", "請從剛才中斷的位置繼續，不要重複已回答的內容。")))
