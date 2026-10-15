@@ -13,7 +13,7 @@ import java.nio.charset.StandardCharsets
 internal data class ChatMessage(val role: String, val content: String)
 
 internal object QwenClient {
-    suspend fun reply(serverUrl: String, messages: List<ChatMessage>): String = withContext(Dispatchers.IO) {
+    suspend fun reply(serverUrl: String, messages: List<ChatMessage>, expectJson: Boolean = false): String = withContext(Dispatchers.IO) {
         val baseUrl = serverUrl.trim().trimEnd('/')
         val endpoint = if (baseUrl.endsWith("/v1")) "$baseUrl/chat/completions" else "$baseUrl/v1/chat/completions"
         val systemInstruction = messages.filter { it.role == "system" }
@@ -26,15 +26,15 @@ internal object QwenClient {
         conversation.forEach { message ->
             payloadMessages.put(JSONObject().put("role", message.role).put("content", message.content))
         }
-        if (expectJson) {
-            payload.put("response_format", JSONObject().put("type", "json_object"))
-        }
         val payload = JSONObject()
             .put("model", "local-model")
             .put("messages", payloadMessages)
             .put("temperature", 0.7)
             .put("max_tokens", 1_024)
             .put("stream", false)
+        if (expectJson) {
+            payload.put("response_format", JSONObject().put("type", "json_object"))
+        }
 
         val answer = StringBuilder()
         var continuationCount = 0

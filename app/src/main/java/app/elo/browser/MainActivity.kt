@@ -252,34 +252,6 @@ private fun ELOBrowser() {
         aiSummaryLoading = false
     }
 
-    fun submit() {
-        val text = query.trim()
-        if (text.isEmpty()) return
-        keyboard?.hide()
-        if (category != SearchCategory.AI && text.equals("設定", ignoreCase = true)) {
-            settingsOpen = true
-            return
-        }
-        if (category == SearchCategory.AI) {
-            submittedQuery = text
-            submittedSearchCategory = SearchCategory.AI
-            searchRevision++
-            aiFollowUpDraft = text
-            error = null
-            sendAiFollowUp()
-            return
-        }
-        if (looksLikeUrl(text)) {
-            browserUrl = normalizeUrl(text)
-            query = ""
-        } else {
-            submittedQuery = text
-            submittedSearchCategory = SearchCategory.ALL
-            searchRevision++
-            error = null
-        }
-    }
-
     fun sendAiFollowUp() {
         val text = aiFollowUpDraft.trim()
         if (text.isEmpty() || aiBusy) return
@@ -341,6 +313,34 @@ private fun ELOBrowser() {
                     aiFollowUpDraft = text
                 }
             aiBusy = false
+        }
+    }
+
+    fun submit() {
+        val text = query.trim()
+        if (text.isEmpty()) return
+        keyboard?.hide()
+        if (category != SearchCategory.AI && text.equals("設定", ignoreCase = true)) {
+            settingsOpen = true
+            return
+        }
+        if (category == SearchCategory.AI) {
+            submittedQuery = text
+            submittedSearchCategory = SearchCategory.AI
+            searchRevision++
+            aiFollowUpDraft = text
+            error = null
+            sendAiFollowUp()
+            return
+        }
+        if (looksLikeUrl(text)) {
+            browserUrl = normalizeUrl(text)
+            query = ""
+        } else {
+            submittedQuery = text
+            submittedSearchCategory = SearchCategory.ALL
+            searchRevision++
+            error = null
         }
     }
 

@@ -19,7 +19,7 @@ internal data class AiActionResponse(
 )
 
 internal object PhoneActions {
-    const val SYSTEM_INSTRUCTION = """
+    val SYSTEM_INSTRUCTION = """
         你是 ELOBrowser 的繁體中文 AI 助理。每則回覆只能輸出一個 JSON 物件，不要使用 Markdown 或程式碼區塊。
         格式：{"reply":"給使用者看的自然回覆","action":null}；若使用者要求手機操作，action 改為下列白名單之一。
         action 格式：
