@@ -117,6 +117,7 @@ private fun ELOBrowser() {
     var geminiApiKey by remember { mutableStateOf(GeminiKeyStore.read(context)) }
     var aiMessages by remember { mutableStateOf(emptyList<ChatMessage>()) }
     var aiFollowUpDraft by remember { mutableStateOf("") }
+    var pendingPhoneAction by remember { mutableStateOf<PendingPhoneAction?>(null) }
     var aiBusy by remember { mutableStateOf(false) }
     var localAiUnavailable by remember { mutableStateOf(false) }
     var results by remember { mutableStateOf<List<ArticleResult>>(emptyList()) }
@@ -281,6 +282,43 @@ private fun ELOBrowser() {
     fun sendAiFollowUp() {
         val text = aiFollowUpDraft.trim()
         if (text.isEmpty() || aiBusy) return
+
+        val pendingAction = pendingPhoneAction
+        if (pendingAction != null) {
+            val reply = when {
+                PhoneActions.isConfirmation(text) -> {
+                    pendingPhoneAction = null
+                    runCatching {
+                        context.startActivity(pendingAction.intent)
+                        pendingAction.completedMessage
+                    }.getOrElse { "無法開啟系統操作畫面：${it.message.orEmpty()}" }
+                }
+                PhoneActions.isCancellation(text) -> {
+                    pendingPhoneAction = null
+                    "已取消${pendingAction.confirmation}。"
+                }
+                else -> "請回覆「可以」確認${pendingAction.confirmation}，或回覆「取消」。"
+            }
+            aiMessages = aiMessages + ChatMessage("user", text) + ChatMessage("assistant", reply)
+            aiFollowUpDraft = ""
+            return
+        }
+
+        val phoneProposal = PhoneActions.parse(text)
+        if (phoneProposal != null) {
+            aiMessages = aiMessages + ChatMessage("user", text) + ChatMessage("assistant", phoneProposal.reply)
+            pendingPhoneAction = phoneProposal.pendingAction
+            aiFollowUpDraft = ""
+            return
+        }
+
+        if (PhoneActions.isGreeting(text)) {
+            aiMessages = aiMessages + ChatMessage("user", text) +
+                ChatMessage("assistant", PhoneActions.smallTalkReply(text))
+            aiFollowUpDraft = ""
+            return
+        }
+
         if (wifiWithInternet && geminiApiKey.isBlank()) {
             error = "請先設定 Gemini API key。"
             settingsOpen = true
@@ -297,7 +335,38 @@ private fun ELOBrowser() {
         error = null
         aiBusy = true
         coroutineScope.launch {
-            runCatching { requestAiReply(conversation) }
+            runCatching {
+                val lookup = withContext(Dispatchers.IO) {
+                    val wiki = if (serverUrl.isNullOrBlank()) {
+                        Result.success(emptyList())
+                    } else {
+                        runCatching { LibraryServer.search(serverUrl!!, text) }
+                    }
+                    val skins = runCatching { SkinCatalog.search(text) }
+                    val found = wiki.getOrDefault(emptyList()) + skins.getOrDefault(emptyList())
+                    SearchOutcome(
+                        results = found,
+                        message = listOf(wiki.exceptionOrNull()?.message, skins.exceptionOrNull()?.message)
+                            .filterNotNull()
+                            .joinToString("\n")
+                            .ifBlank { null }
+                    )
+                }
+                results = lookup.results
+                if (lookup.results.isEmpty()) {
+                    "我在維基百科與 CS 圖鑑中沒有找到相關資料。你可以換個關鍵字試試。"
+                } else {
+                    val sourceText = lookup.results.take(12).joinToString("\n") { result ->
+                        "標題：${result.title}\n資料：${result.snippet.take(500)}"
+                    }
+                    requestAiReply(
+                        listOf(
+                            ChatMessage("system", "你是搜尋助理。只能根據提供的維基百科與 CS 圖鑑搜尋結果，用繁體中文自然回答；不可補充來源以外的知識。若資料不足，請明確說明。"),
+                            ChatMessage("user", "問題：$text\n\n搜尋結果：\n$sourceText")
+                        )
+                    )
+                }
+            }
                 .onSuccess { reply -> aiMessages = aiMessages + ChatMessage("assistant", reply) }
                 .onFailure { failure ->
                     localAiUnavailable = !wifiWithInternet
