@@ -132,6 +132,7 @@ private fun ELOBrowser() {
     var serverUrl by remember { mutableStateOf(preferences.getString("server_url", null)) }
     var serverOpen by remember { mutableStateOf(false) }
     var settingsOpen by remember { mutableStateOf(false) }
+    var learningOpen by remember { mutableStateOf(true) }
     var setupComplete by remember { mutableStateOf(preferences.getBoolean("setup_complete", false)) }
     val keyboard = LocalSoftwareKeyboardController.current
     val coroutineScope = rememberCoroutineScope()
@@ -427,6 +428,18 @@ private fun ELOBrowser() {
                         if (title.isNotBlank()) article = article?.copy(title = title)
                     }
                 )
+            } else if (learningOpen) {
+                LearningScreen(
+                    aiReady = if (wifiWithInternet) geminiApiKey.isNotBlank() else aiServerUrl.isNotBlank(),
+                    onOpenSettings = { settingsOpen = true },
+                    onOpenBrowser = { learningOpen = false },
+                    onGenerate = { system, prompt, expectJson ->
+                        requestAiReply(
+                            listOf(ChatMessage("system", system), ChatMessage("user", prompt)),
+                            expectJson
+                        )
+                    }
+                )
             } else {
                 HomeScreen(
                     serverUrl = serverUrl,
@@ -456,6 +469,7 @@ private fun ELOBrowser() {
                         error = null
                     },
                     onOpenSettings = { settingsOpen = true },
+                    onOpenLearning = { learningOpen = true },
                     onAiFollowUpChange = { aiFollowUpDraft = it },
                     onSendAiFollowUp = { sendAiFollowUp() },
                     onDownloadLocalModel = {

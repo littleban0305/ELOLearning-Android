@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.School
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -113,7 +114,7 @@ internal fun OnboardingScreen(
     ) {
         Text("ELOBrowser", color = Ink, fontSize = 34.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(8.dp))
-        Text("開始前設定圖書館與 AI", color = Muted, fontSize = 15.sp)
+        Text("開始前設定 AI，圖書館網址可稍後新增", color = Muted, fontSize = 15.sp)
         Spacer(Modifier.height(24.dp))
         OutlinedTextField(
             value = apiKeyDraft,
@@ -157,7 +158,7 @@ internal fun OnboardingScreen(
             onClick = {
                 when {
                     apiKeyDraft.isBlank() -> validationError = "請先填入 Gemini API key。"
-                    !isHttpUrl(libraryDraft) -> validationError = "請填入有效的 Kiwix 伺服器網址。"
+                    libraryDraft.isNotBlank() && !isHttpUrl(libraryDraft) -> validationError = "圖書館網址格式無效。"
                     qwenDraft.isNotBlank() && !isHttpUrl(qwenDraft) -> validationError = "本機 Qwen 網址格式無效。"
                     else -> {
                         validationError = null
@@ -216,6 +217,7 @@ internal fun HomeScreen(
     onQueryChange: (String) -> Unit,
     onCategoryChange: (SearchCategory) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenLearning: () -> Unit,
     onAiFollowUpChange: (String) -> Unit,
     onSendAiFollowUp: () -> Unit,
     onDownloadLocalModel: () -> Unit,
@@ -252,7 +254,8 @@ internal fun HomeScreen(
                         onQueryChange = onQueryChange,
                         onSubmit = onSubmit,
                         onOpenServer = onOpenServer,
-                        onOpenSettings = onOpenSettings
+                        onOpenSettings = onOpenSettings,
+                        onOpenLearning = onOpenLearning
                     )
                     Spacer(Modifier.height(8.dp))
                     SearchResults(
@@ -299,7 +302,8 @@ internal fun HomeScreen(
                             onQueryChange = onQueryChange,
                             onSubmit = onSubmit,
                             onOpenServer = onOpenServer,
-                            onOpenSettings = onOpenSettings
+                            onOpenSettings = onOpenSettings,
+                            onOpenLearning = onOpenLearning
                         )
                     }
                 }
@@ -657,7 +661,8 @@ private fun CommandInput(
     onQueryChange: (String) -> Unit,
     onSubmit: () -> Unit,
     onOpenServer: () -> Unit,
-    onOpenSettings: () -> Unit
+    onOpenSettings: () -> Unit,
+    onOpenLearning: () -> Unit
 ) {
     var menuOpen by remember { mutableStateOf(false) }
     Surface(
@@ -675,6 +680,11 @@ private fun CommandInput(
                     Icon(Icons.Default.Add, contentDescription = "更多功能", tint = Leaf)
                 }
                 DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    DropdownMenuItem(
+                        text = { Text("ELOLearning 學習") },
+                        leadingIcon = { Icon(Icons.Default.School, contentDescription = null) },
+                        onClick = { menuOpen = false; onOpenLearning() }
+                    )
                     DropdownMenuItem(
                         text = { Text("設定圖書館伺服器") },
                         leadingIcon = { Icon(Icons.Default.Cloud, contentDescription = null) },
