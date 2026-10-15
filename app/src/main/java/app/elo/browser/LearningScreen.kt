@@ -144,7 +144,7 @@ internal fun LearningScreen(
         coroutineScope.launch {
             runCatching {
                 onGenerate(
-                    "你是台灣的親切學習老師。請使用繁體中文，符合$grade學生程度，使用清楚的小標題與例子。只回答主題範圍內內容，避免捏造。",
+                    "你是台灣的親切學習老師。請使用繁體中文，符合${grade}學生程度，使用清楚的小標題與例子。只回答主題範圍內內容，避免捏造。",
                     "科目：$subject\n年級：$grade\n主題：$cleanTopic\n學生需求：${instruction.trim().ifBlank { "請解釋概念並整理成可複習的重點。" }}\n\n請整理成 3 至 6 個學習重點，包含必要的例子或步驟。",
                     false
                 )
