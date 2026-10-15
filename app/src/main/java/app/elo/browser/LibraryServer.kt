@@ -47,6 +47,7 @@ internal object LibraryServer {
         parser.setInput(StringReader(xml))
         val results = mutableListOf<ArticleResult>()
         var inResult = false
+        var resultDepth = -1
         var title: String? = null
         var link: String? = null
         var snippet = ""
@@ -58,12 +59,15 @@ internal object LibraryServer {
                     val name = parser.name.lowercase()
                     if (name in setOf("item", "entry", "result")) {
                         inResult = true
+                        resultDepth = parser.depth
                         title = null
                         link = null
                         snippet = ""
                     } else if (inResult) {
                         when (name) {
-                            "title" -> title = readElementText(parser)
+                            "title" -> if (parser.depth == resultDepth + 1) {
+                                title = readElementText(parser)
+                            }
                             "link", "url", "guid" -> {
                                 val href = parser.getAttributeValue(null, "href")
                                 val rel = parser.getAttributeValue(null, "rel")

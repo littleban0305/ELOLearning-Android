@@ -14,8 +14,10 @@ import java.nio.charset.StandardCharsets
 internal object GeminiClient {
     private const val MODEL = "gemini-3.8-flash"
     private const val MAX_503_RETRIES = 2
+    private const val MAX_CONTINUATIONS = 1
 
     private data class HttpResult(val status: Int, val body: String, val retryAfterSeconds: Long?)
+    private data class ParsedReply(val text: String, val wasTruncated: Boolean)
 
     suspend fun reply(apiKey: String, messages: List<ChatMessage>): String {
         require(apiKey.isNotBlank()) { "請先設定 Gemini API key。" }
@@ -32,15 +34,36 @@ internal object GeminiClient {
         }
         val payload = JSONObject()
             .put("contents", contents)
-            .put("generationConfig", JSONObject().put("temperature", 0.7).put("maxOutputTokens", 384))
+            .put("generationConfig", JSONObject().put("temperature", 0.7).put("maxOutputTokens", 1_024))
         if (systemInstruction.isNotBlank()) {
             payload.put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemInstruction))))
         }
 
+        val contents = payload.getJSONArray("contents")
+        val completeAnswer = StringBuilder()
+        var continuationCount = 0
         var retryCount = 0
         while (true) {
             val response = sendRequest(apiKey, payload.toString())
-            if (response.status in 200..299) return parseReply(response.body)
+            if (response.status in 200..299) {
+                val reply = parseReply(response.body)
+                completeAnswer.append(reply.text)
+                if (!reply.wasTruncated || continuationCount >= MAX_CONTINUATIONS) {
+                    return completeAnswer.toString().ifBlank { "Gemini 沒有回傳文字，請再試一次。" }
+                }
+                contents.put(
+                    JSONObject()
+                        .put("role", "model")
+                        .put("parts", JSONArray().put(JSONObject().put("text", reply.text)))
+                )
+                contents.put(
+                    JSONObject()
+                        .put("role", "user")
+                        .put("parts", JSONArray().put(JSONObject().put("text", "請從剛才中斷的位置繼續，不要重複已回答的內容。")))
+                )
+                continuationCount++
+                continue
+            }
 
             if (response.status == 503 && retryCount < MAX_503_RETRIES) {
                 val delayMillis = response.retryAfterSeconds
@@ -84,16 +107,14 @@ internal object GeminiClient {
         }
     }
 
-    private fun parseReply(body: String): String {
-        val parts = JSONObject(body)
-            .getJSONArray("candidates")
-            .getJSONObject(0)
-            .getJSONObject("content")
-            .getJSONArray("parts")
-        return buildString {
+    private fun parseReply(body: String): ParsedReply {
+        val candidate = JSONObject(body).getJSONArray("candidates").getJSONObject(0)
+        val parts = candidate.getJSONObject("content").getJSONArray("parts")
+        val text = buildString {
             for (index in 0 until parts.length()) {
                 append(parts.getJSONObject(index).optString("text"))
             }
-        }.trim().ifBlank { "Gemini 沒有回傳文字，請再試一次。" }
+        }.trim()
+        return ParsedReply(text, candidate.optString("finishReason") == "MAX_TOKENS")
     }
 }

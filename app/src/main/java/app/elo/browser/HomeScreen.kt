@@ -25,6 +25,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -201,6 +202,7 @@ internal fun HomeScreen(
     localAiUnavailable: Boolean,
     query: String,
     submittedQuery: String,
+    searchRevision: Int,
     category: SearchCategory,
     aiSummary: String?,
     aiSummaryError: String?,
@@ -221,7 +223,7 @@ internal fun HomeScreen(
     onSubmit: () -> Unit,
     onOpenServer: () -> Unit,
     onOpenArticle: (ArticleResult) -> Unit,
-    onOpenSkinGroup: (String, List<ArticleResult>) -> Unit
+    onOpenSkinGroup: (SkinGroup) -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -260,6 +262,7 @@ internal fun HomeScreen(
                         usingGemini = usingGemini,
                         localAiUnavailable = localAiUnavailable,
                         query = submittedQuery,
+                        searchRevision = searchRevision,
                         category = category,
                         aiSummary = aiSummary,
                         aiSummaryError = aiSummaryError,
@@ -325,6 +328,7 @@ private fun SearchResults(
     usingGemini: Boolean,
     localAiUnavailable: Boolean,
     query: String,
+    searchRevision: Int,
     category: SearchCategory,
     aiSummary: String?,
     aiSummaryError: String?,
@@ -342,8 +346,13 @@ private fun SearchResults(
     onDownloadLocalModel: () -> Unit,
     onFollowUp: () -> Unit,
     onOpenArticle: (ArticleResult) -> Unit,
-    onOpenSkinGroup: (String, List<ArticleResult>) -> Unit
+    onOpenSkinGroup: (SkinGroup) -> Unit
 ) {
+    var pages by remember(searchRevision) { mutableStateOf(emptyMap<SearchCategory, Int>()) }
+    val listStates = remember(searchRevision) { mutableMapOf<SearchCategory, LazyListState>() }
+    val page = pages[category] ?: 0
+    val listState = listStates.getOrPut(category) { LazyListState() }
+
     Column(modifier = Modifier.fillMaxSize()) {
         ScrollableTabRow(
             selectedTabIndex = SearchCategory.entries.indexOf(category),
@@ -369,6 +378,7 @@ private fun SearchResults(
                 summaryError = aiSummaryError,
                 searchError = error,
                 summaryLoading = aiSummaryLoading,
+                listState = listState,
                 onDownloadLocalModel = onDownloadLocalModel,
                 usingGemini = usingGemini,
                 localAiUnavailable = localAiUnavailable,
@@ -413,6 +423,7 @@ private fun SearchResults(
                         Text(error, color = ErrorRed, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
                     }
                     LazyColumn(
+                        state = listState,
                         modifier = Modifier.weight(1f).fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
@@ -454,10 +465,10 @@ private fun SearchResults(
                 }
             }
         } else {
-            var page by remember(query, category) { mutableStateOf(0) }
-            val weaponGroups = results.filter { it.isCatalogItem }
-                .groupBy { it.weaponName ?: "其他武器" }
-                .toList()
+            fun updatePage(newPage: Int) {
+                pages = pages + (category to newPage)
+            }
+            val weaponGroups = groupSkinVariants(results)
             val articleResults = results.filter { !it.isCatalogItem }
             val pageCount = when (category) {
                 SearchCategory.CS -> ((weaponGroups.size + 19) / 20).coerceAtLeast(1)
@@ -481,17 +492,16 @@ private fun SearchResults(
                     query.isBlank() -> Text("輸入關鍵字開始搜尋", color = Muted, fontSize = 13.sp)
                 }
                 if (hasPageItems) {
-                    PageControls(page = page, pageCount = pageCount, onPageChange = { page = it })
+                    PageControls(page = page, pageCount = pageCount, onPageChange = ::updatePage)
                 }
                 LazyColumn(
+                    state = listState,
                     modifier = Modifier.weight(1f).fillMaxWidth(),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     if (category == SearchCategory.CS) {
-                        items(pageWeaponGroups, key = { it.first }) { (weapon, variants) ->
-                            WeaponGroupButton(weapon, variants) {
-                                onOpenSkinGroup(weapon, variants)
-                            }
+                        items(pageWeaponGroups, key = { it.id }) { group ->
+                            WeaponGroupButton(group) { onOpenSkinGroup(group) }
                         }
                     } else {
                         items(pageArticles, key = { it.path }) { result ->
@@ -500,7 +510,7 @@ private fun SearchResults(
                     }
                 }
                 if (hasPageItems) {
-                    PageControls(page = page, pageCount = pageCount, onPageChange = { page = it })
+                    PageControls(page = page, pageCount = pageCount, onPageChange = ::updatePage)
                 }
             }
         }
@@ -515,20 +525,19 @@ private fun AllSearchResults(
     summaryError: String?,
     searchError: String?,
     summaryLoading: Boolean,
+    listState: LazyListState,
     onDownloadLocalModel: () -> Unit,
     usingGemini: Boolean,
     localAiUnavailable: Boolean,
     onFollowUp: () -> Unit,
     onCategoryChange: (SearchCategory) -> Unit,
     onOpenArticle: (ArticleResult) -> Unit,
-    onOpenSkinGroup: (String, List<ArticleResult>) -> Unit
+    onOpenSkinGroup: (SkinGroup) -> Unit
 ) {
     val wikiResults = results.filter { !it.isCatalogItem }.take(20)
-    val skinGroups = results.filter { it.isCatalogItem }
-        .groupBy { it.weaponName ?: "其他武器" }
-        .toList()
-        .take(20)
+    val skinGroups = groupSkinVariants(results).take(20)
     LazyColumn(
+        state = listState,
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
@@ -574,8 +583,8 @@ private fun AllSearchResults(
         if (skinGroups.isEmpty() && query.isNotBlank()) {
             item { Text("沒有 CS 圖鑑結果", color = Muted, fontSize = 13.sp) }
         }
-        items(skinGroups, key = { it.first }) { (weapon, variants) ->
-            WeaponGroupButton(weapon, variants) { onOpenSkinGroup(weapon, variants) }
+        items(skinGroups, key = { it.id }) { group ->
+            WeaponGroupButton(group) { onOpenSkinGroup(group) }
         }
         if (skinGroups.isNotEmpty()) {
             item { TextButton(onClick = { onCategoryChange(SearchCategory.CS) }) { Text("查看更多 CS 圖鑑結果") } }
@@ -596,8 +605,7 @@ private fun SectionHeading(title: String, onClick: () -> Unit) {
 
 @Composable
 private fun WeaponGroupButton(
-    weaponName: String,
-    variants: List<ArticleResult>,
+    group: SkinGroup,
     onClick: () -> Unit
 ) {
     Surface(
@@ -609,18 +617,18 @@ private fun WeaponGroupButton(
             modifier = Modifier.padding(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            variants.firstOrNull()?.imageUrl?.let { imageUrl ->
+            group.variants.firstOrNull()?.imageUrl?.let { imageUrl ->
                 AsyncImage(
                     model = imageUrl,
-                    contentDescription = weaponName,
+                    contentDescription = group.skinName,
                     modifier = Modifier.width(52.dp).height(52.dp).clip(RoundedCornerShape(4.dp)),
                     contentScale = ContentScale.Fit
                 )
                 Spacer(Modifier.width(12.dp))
             }
             Column(modifier = Modifier.weight(1f)) {
-                Text(weaponName, color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-                Text("${variants.size} 個磨損／外觀版本", color = Muted, fontSize = 12.sp)
+                Text(group.skinName, color = Ink, fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
+                Text("${group.variants.size} 個磨損度版本", color = Muted, fontSize = 12.sp)
             }
             Text("查看", color = Leaf, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
         }

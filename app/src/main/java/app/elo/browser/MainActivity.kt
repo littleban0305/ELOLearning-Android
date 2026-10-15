@@ -110,6 +110,8 @@ private fun ELOBrowser() {
     var error by remember { mutableStateOf<String?>(null) }
     var query by remember { mutableStateOf("") }
     var submittedQuery by remember { mutableStateOf("") }
+    var submittedSearchCategory by remember { mutableStateOf(SearchCategory.ALL) }
+    var searchRevision by remember { mutableStateOf(0) }
     var category by remember { mutableStateOf(SearchCategory.ALL) }
     var aiServerUrl by remember { mutableStateOf(preferences.getString("ai_server_url", "").orEmpty()) }
     var geminiApiKey by remember { mutableStateOf(GeminiKeyStore.read(context)) }
@@ -124,7 +126,7 @@ private fun ELOBrowser() {
     var searching by remember { mutableStateOf(false) }
     var article by remember { mutableStateOf<ArticleResult?>(null) }
     var selectedSkin by remember { mutableStateOf<ArticleResult?>(null) }
-    var selectedSkinGroup by remember { mutableStateOf<Pair<String, List<ArticleResult>>?>(null) }
+    var selectedSkinGroup by remember { mutableStateOf<SkinGroup?>(null) }
     var browserUrl by remember { mutableStateOf<String?>(null) }
     var serverUrl by remember { mutableStateOf(preferences.getString("server_url", null)) }
     var serverOpen by remember { mutableStateOf(false) }
@@ -149,12 +151,10 @@ private fun ELOBrowser() {
             .getOrThrow()
     }
 
-    LaunchedEffect(submittedQuery, serverUrl, category, article, selectedSkin, serverOpen, settingsOpen) {
+    LaunchedEffect(searchRevision) {
         val activeServerUrl = serverUrl
         val term = submittedQuery.trim()
-        if (term.isBlank() || category == SearchCategory.AI || article != null || selectedSkin != null ||
-            serverOpen || settingsOpen || looksLikeUrl(term)
-        ) {
+        if (searchRevision == 0 || term.isBlank() || looksLikeUrl(term)) {
             results = emptyList()
             searching = false
             error = null
@@ -167,7 +167,7 @@ private fun ELOBrowser() {
         delay(280)
         error = null
         val outcome = withContext(Dispatchers.IO) {
-            when (category) {
+            when (submittedSearchCategory) {
                 SearchCategory.AI -> SearchOutcome(emptyList())
                 SearchCategory.CS -> runCatching { SkinCatalog.search(term) }
                     .fold({ SearchOutcome(it) }, { SearchOutcome(emptyList(), it.message ?: "CS 圖鑑搜尋失敗。") })
@@ -201,9 +201,9 @@ private fun ELOBrowser() {
         searching = false
     }
 
-    LaunchedEffect(submittedQuery, category, aiServerUrl, geminiApiKey, wifiWithInternet, results, searching, settingsOpen, serverOpen) {
+    LaunchedEffect(searchRevision, aiServerUrl, geminiApiKey, wifiWithInternet, results, searching) {
         val term = submittedQuery.trim()
-        if (category != SearchCategory.ALL || term.isBlank() || looksLikeUrl(term) || settingsOpen || serverOpen) {
+        if (submittedSearchCategory != SearchCategory.ALL || term.isBlank() || looksLikeUrl(term)) {
             aiSummary = null
             aiSummaryError = null
             aiSummaryLoading = false
@@ -262,16 +262,18 @@ private fun ELOBrowser() {
         if (category == SearchCategory.AI) {
             category = SearchCategory.ALL
             submittedQuery = text
+            submittedSearchCategory = SearchCategory.ALL
+            searchRevision++
             error = null
             return
         }
         if (looksLikeUrl(text)) {
             browserUrl = normalizeUrl(text)
             query = ""
-        } else if (category == SearchCategory.WIKIPEDIA && serverUrl.isNullOrBlank()) {
-            error = "請先點左下角的 + 設定舊手機圖書館伺服器。"
         } else {
             submittedQuery = text
+            submittedSearchCategory = SearchCategory.ALL
+            searchRevision++
             error = null
         }
     }
@@ -398,6 +400,7 @@ private fun ELOBrowser() {
                     localAiUnavailable = localAiUnavailable,
                     query = query,
                     submittedQuery = submittedQuery,
+                    searchRevision = searchRevision,
                     category = category,
                     aiSummary = aiSummary,
                     aiSummaryError = aiSummaryError,

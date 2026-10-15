@@ -20,8 +20,38 @@ internal data class ArticleResult(
     val imageUrl: String? = null,
     val isCatalogItem: Boolean = false,
     val weaponName: String? = null,
-    val wearName: String? = null
+    val wearName: String? = null,
+    val skinGroupId: String? = null,
+    val skinBaseName: String? = null,
+    val wearOrder: Int? = null
 )
+
+internal data class SkinGroup(
+    val id: String,
+    val weaponName: String,
+    val skinName: String,
+    val variants: List<ArticleResult>
+)
+
+internal fun groupSkinVariants(results: List<ArticleResult>): List<SkinGroup> =
+    results.asSequence()
+        .filter { it.isCatalogItem }
+        .groupBy {
+            it.skinGroupId
+                ?: listOfNotNull(it.weaponName, it.skinBaseName).joinToString("|").ifBlank { it.path }
+        }
+        .map { (id, unsortedVariants) ->
+            val variants = unsortedVariants.sortedWith(
+                compareBy<ArticleResult> { it.wearOrder ?: Int.MAX_VALUE }.thenBy { it.title }
+            )
+            val first = variants.first()
+            SkinGroup(
+                id = id,
+                weaponName = first.weaponName ?: "其他武器",
+                skinName = first.skinBaseName ?: first.title,
+                variants = variants
+            )
+        }
 
 internal enum class SearchMode {
     TITLE,
